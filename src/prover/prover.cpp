@@ -2,22 +2,19 @@
 #include <iomanip>
 #include <unistd.h>
 #include "prover.hpp"
+#include "definitions.hpp"
 #include "utils.hpp"
 #include "scalar.hpp"
 #include "proof2zkin.hpp"
 #include "main.hpp"
-#if (PROVER_FORK_ID == 10)
-    #include "fork_10/main.hpp"
-    #include "fork_10/main.recursive1.hpp"
-    #include "fork_10/main.recursive2.hpp"
-    #include "fork_10/main.recursiveF.hpp"
-    #include "fork_10/main.final.hpp"
+#if (PROVER_FORK_ID == 13) // fork_13
+    #include "fork_13/main.hpp"
+    #include "fork_13/main.recursive1.hpp"
+    #include "fork_13/main.recursive2.hpp"
+    #include "fork_13/main.recursiveF.hpp"
+    #include "fork_13/main.final.hpp"
 #else
-    #include "fork_11/main.hpp"
-    #include "fork_11/main.recursive1.hpp"
-    #include "fork_11/main.recursive2.hpp"
-    #include "fork_11/main.recursiveF.hpp"
-    #include "fork_11/main.final.hpp"
+    #error "Invalid PROVER_FORK_ID"
 #endif
 
 #include "binfile_utils.hpp"
@@ -124,17 +121,17 @@ Prover::Prover(Goldilocks &fr,
             if (config.zkevmCmPols.size() > 0)
             {
                 pAddress = mapFile(config.zkevmCmPols, polsSize, true);
-                zklog.info("Prover::genBatchProof() successfully mapped " + to_string(polsSize) + " bytes to file " + config.zkevmCmPols);
+                zklog.info("Prover::Prover() successfully mapped " + to_string(polsSize) + " bytes to file " + config.zkevmCmPols);
             }
             else
             {
                 pAddress = calloc_zkevm(polsSize, 1);
                 if (pAddress == NULL)
                 {
-                    zklog.error("Prover::genBatchProof() failed calling malloc() of size " + to_string(polsSize));
+                    zklog.error("Prover::Prover() failed calling malloc() of size " + to_string(polsSize));
                     exitProcess();
                 }
-                zklog.info("Prover::genBatchProof() successfully allocated " + to_string(polsSize) + " bytes");
+                zklog.info("Prover::Prover() successfully allocated " + to_string(polsSize) + " bytes");
             }
 
 #if defined(__USE_CUDA__) && defined(ENABLE_EXPERIMENTAL_CODE)
@@ -634,10 +631,10 @@ void Prover::genBatchProof(ProverRequest *pProverRequest)
 
 
         CommitPolsStarks cmPols12a((uint8_t *)pAddress + starksC12a->starkInfo.mapOffsets.section[cm1_n] * sizeof(Goldilocks::Element), (1 << starksC12a->starkInfo.starkStruct.nBits), starksC12a->starkInfo.nCm1);
-    #if (PROVER_FORK_ID == 10)
-        CircomFork10::getCommitedPols(&cmPols12a, config.zkevmVerifier, config.c12aExec, zkin, (1 << starksC12a->starkInfo.starkStruct.nBits), starksC12a->starkInfo.nCm1);
+    #if (PROVER_FORK_ID == 13) // fork_13
+        CircomFork13::getCommitedPols(&cmPols12a, config.zkevmVerifier, config.c12aExec, zkin, (1 << starksC12a->starkInfo.starkStruct.nBits), starksC12a->starkInfo.nCm1);
     #else
-        CircomFork11::getCommitedPols(&cmPols12a, config.zkevmVerifier, config.c12aExec, zkin, (1 << starksC12a->starkInfo.starkStruct.nBits), starksC12a->starkInfo.nCm1);
+        #error "Invalid PROVER_FORK_ID"
     #endif
 
         // void *pointerCm12aPols = mapFile("config/c12a/c12a.commit", cmPols12a.size(), true);
@@ -678,10 +675,10 @@ void Prover::genBatchProof(ProverRequest *pProverRequest)
         TimerStopAndLog(STARK_JSON_GENERATION_BATCH_PROOF_C12A);
 
         CommitPolsStarks cmPolsRecursive1((uint8_t *)pAddress + starksRecursive1->starkInfo.mapOffsets.section[cm1_n] * sizeof(Goldilocks::Element), (1 << starksRecursive1->starkInfo.starkStruct.nBits), starksRecursive1->starkInfo.nCm1);
-    #if (PROVER_FORK_ID == 10)
-        CircomRecursive1Fork10::getCommitedPols(&cmPolsRecursive1, config.recursive1Verifier, config.recursive1Exec, zkinC12a, (1 << starksRecursive1->starkInfo.starkStruct.nBits), starksRecursive1->starkInfo.nCm1);
+    #if (PROVER_FORK_ID == 13) // fork_13
+        CircomRecursive1Fork13::getCommitedPols(&cmPolsRecursive1, config.recursive1Verifier, config.recursive1Exec, zkinC12a, (1 << starksRecursive1->starkInfo.starkStruct.nBits), starksRecursive1->starkInfo.nCm1);
     #else
-        CircomRecursive1Fork11::getCommitedPols(&cmPolsRecursive1, config.recursive1Verifier, config.recursive1Exec, zkinC12a, (1 << starksRecursive1->starkInfo.starkStruct.nBits), starksRecursive1->starkInfo.nCm1);
+        #error "Invalid PROVER_FORK_ID"
     #endif
 
         // void *pointerCmRecursive1Pols = mapFile("config/recursive1/recursive1.commit", cmPolsRecursive1.size(), true);
@@ -825,10 +822,10 @@ void Prover::genAggregatedProof(ProverRequest *pProverRequest)
     }
 
     CommitPolsStarks cmPolsRecursive2((uint8_t *)pAddress + starksRecursive2->starkInfo.mapOffsets.section[cm1_n] * sizeof(Goldilocks::Element), (1 << starksRecursive2->starkInfo.starkStruct.nBits), starksRecursive2->starkInfo.nCm1);
-    #if (PROVER_FORK_ID == 10)
-        CircomRecursive2Fork10::getCommitedPols(&cmPolsRecursive2, config.recursive2Verifier, config.recursive2Exec, zkinInputRecursive2, (1 << starksRecursive2->starkInfo.starkStruct.nBits), starksRecursive2->starkInfo.nCm1);
+    #if (PROVER_FORK_ID == 13) // fork_13
+        CircomRecursive2Fork13::getCommitedPols(&cmPolsRecursive2, config.recursive2Verifier, config.recursive2Exec, zkinInputRecursive2, (1 << starksRecursive2->starkInfo.starkStruct.nBits), starksRecursive2->starkInfo.nCm1);
     #else
-        CircomRecursive2Fork11::getCommitedPols(&cmPolsRecursive2, config.recursive2Verifier, config.recursive2Exec, zkinInputRecursive2, (1 << starksRecursive2->starkInfo.starkStruct.nBits), starksRecursive2->starkInfo.nCm1);
+        #error "Invalid PROVER_FORK_ID"
     #endif
 
     // void *pointerCmRecursive2Pols = mapFile("config/recursive2/recursive2.commit", cmPolsRecursive2.size(), true);
@@ -935,10 +932,10 @@ void Prover::genFinalProof(ProverRequest *pProverRequest)
     }
 
     CommitPolsStarks cmPolsRecursiveF((uint8_t *)pAddress + starksRecursiveF->starkInfo.mapOffsets.section[cm1_n] * sizeof(Goldilocks::Element), (1 << starksRecursiveF->starkInfo.starkStruct.nBits), starksRecursiveF->starkInfo.nCm1);
-    #if (PROVER_FORK_ID == 10)
-        CircomRecursiveFFork10::getCommitedPols(&cmPolsRecursiveF, config.recursivefVerifier, config.recursivefExec, zkinFinal, (1 << starksRecursiveF->starkInfo.starkStruct.nBits), starksRecursiveF->starkInfo.nCm1);
+    #if (PROVER_FORK_ID == 13) // fork_13
+        CircomRecursiveFFork13::getCommitedPols(&cmPolsRecursiveF, config.recursivefVerifier, config.recursivefExec, zkinFinal, (1 << starksRecursiveF->starkInfo.starkStruct.nBits), starksRecursiveF->starkInfo.nCm1);
     #else
-        CircomRecursiveFFork11::getCommitedPols(&cmPolsRecursiveF, config.recursivefVerifier, config.recursivefExec, zkinFinal, (1 << starksRecursiveF->starkInfo.starkStruct.nBits), starksRecursiveF->starkInfo.nCm1);
+        #error "Invalid PROVER_FORK_ID"
     #endif
     
 
@@ -991,18 +988,18 @@ void Prover::genFinalProof(ProverRequest *pProverRequest)
     //  Verifier final
     //  ----------------------------------------------
 
-    #if (PROVER_FORK_ID == 10)
+    #if (PROVER_FORK_ID == 13) // fork_13
         TimerStart(CIRCOM_LOAD_CIRCUIT_FINAL);
-        CircomFinalFork10::Circom_Circuit *circuitFinal = CircomFinalFork10::loadCircuit(config.finalVerifier);
+        CircomFinalFork13::Circom_Circuit *circuitFinal = CircomFinalFork13::loadCircuit(config.finalVerifier);
         TimerStopAndLog(CIRCOM_LOAD_CIRCUIT_FINAL);
 
         TimerStart(CIRCOM_FINAL_LOAD_JSON);
-        CircomFinalFork10::Circom_CalcWit *ctxFinal = new CircomFinalFork10::Circom_CalcWit(circuitFinal);
+        CircomFinalFork13::Circom_CalcWit *ctxFinal = new CircomFinalFork13::Circom_CalcWit(circuitFinal);
 
-        CircomFinalFork10::loadJsonImpl(ctxFinal, zkinRecursiveF);
+        CircomFinalFork13::loadJsonImpl(ctxFinal, zkinRecursiveF);
         if (ctxFinal->getRemaingInputsToBeSet() != 0)
         {
-            zklog.error("Prover::genProof() Not all inputs have been set. Only " + to_string(CircomFinalFork10::get_main_input_signal_no() - ctxFinal->getRemaingInputsToBeSet()) + " out of " + to_string(CircomFinalFork10::get_main_input_signal_no()));
+            zklog.error("Prover::genFinalProof() Not all inputs have been set. Only " + to_string(CircomFinalFork13::get_main_input_signal_no() - ctxFinal->getRemaingInputsToBeSet()) + " out of " + to_string(CircomFinalFork13::get_main_input_signal_no()));
             exitProcess();
         }
         TimerStopAndLog(CIRCOM_FINAL_LOAD_JSON);
@@ -1010,35 +1007,13 @@ void Prover::genFinalProof(ProverRequest *pProverRequest)
         TimerStart(CIRCOM_GET_BIN_WITNESS_FINAL);
         AltBn128::FrElement *pWitnessFinal = NULL;
         uint64_t witnessSizeFinal = 0;
-        CircomFinalFork10::getBinWitness(ctxFinal, pWitnessFinal, witnessSizeFinal);
-        CircomFinalFork10::freeCircuit(circuitFinal);
+        CircomFinalFork13::getBinWitness(ctxFinal, pWitnessFinal, witnessSizeFinal);
+        CircomFinalFork13::freeCircuit(circuitFinal);
         delete ctxFinal;
 
         TimerStopAndLog(CIRCOM_GET_BIN_WITNESS_FINAL);
     #else
-        TimerStart(CIRCOM_LOAD_CIRCUIT_FINAL);
-        CircomFinalFork11::Circom_Circuit *circuitFinal = CircomFinalFork11::loadCircuit(config.finalVerifier);
-        TimerStopAndLog(CIRCOM_LOAD_CIRCUIT_FINAL);
-
-        TimerStart(CIRCOM_FINAL_LOAD_JSON);
-        CircomFinalFork11::Circom_CalcWit *ctxFinal = new CircomFinalFork11::Circom_CalcWit(circuitFinal);
-
-        CircomFinalFork11::loadJsonImpl(ctxFinal, zkinRecursiveF);
-        if (ctxFinal->getRemaingInputsToBeSet() != 0)
-        {
-            zklog.error("Prover::genProof() Not all inputs have been set. Only " + to_string(CircomFinalFork11::get_main_input_signal_no() - ctxFinal->getRemaingInputsToBeSet()) + " out of " + to_string(CircomFinalFork11::get_main_input_signal_no()));
-            exitProcess();
-        }
-        TimerStopAndLog(CIRCOM_FINAL_LOAD_JSON);
-
-        TimerStart(CIRCOM_GET_BIN_WITNESS_FINAL);
-        AltBn128::FrElement *pWitnessFinal = NULL;
-        uint64_t witnessSizeFinal = 0;
-        CircomFinalFork11::getBinWitness(ctxFinal, pWitnessFinal, witnessSizeFinal);
-        CircomFinalFork11::freeCircuit(circuitFinal);
-    delete ctxFinal;
-
-    TimerStopAndLog(CIRCOM_GET_BIN_WITNESS_FINAL);
+        #error "Invalid PROVER_FORK_ID"
     #endif
 
     TimerStart(SAVE_PUBLICS_JSON);
@@ -1060,7 +1035,7 @@ void Prover::genFinalProof(ProverRequest *pProverRequest)
     zkey = BinFileUtils::openExisting(config.finalStarkZkey, "zkey", 1, binPointer, polsSize - lengthPrecomputedBuffer);
     protocolId = Zkey::getProtocolIdFromZkey(zkey.get());
     if(protocolId != Zkey::FFLONK_PROTOCOL_ID) {
-        zklog.error("Prover::genBatchProof() zkey protocolId has to be Fflonk");
+        zklog.error("Prover::genFinalProof() zkey protocolId has to be Fflonk");
         exitProcess();
     }
     
@@ -1093,7 +1068,7 @@ void Prover::genFinalProof(ProverRequest *pProverRequest)
     }
     catch (std::exception &e)
     {
-        zklog.error("Prover::genProof() got exception in rapid SNARK:" + string(e.what()));
+        zklog.error("Prover::genFinalProof() got exception in rapid SNARK:" + string(e.what()));
         exitProcess();
     }
 

@@ -10,12 +10,12 @@
 #include "config.hpp"
 #include "version.hpp"
 #include "proof2zkin.hpp"
-#if (PROVER_FORK_ID == 10)
-    #include "fork_10/calcwit.hpp"
-    #include "fork_10/circom.hpp"
+#include "definitions.hpp"
+#if (PROVER_FORK_ID == 13)
+    #include "fork_13/calcwit.hpp"
+    #include "fork_13/circom.hpp"
 #else
-    #include "fork_11/calcwit.hpp"
-    #include "fork_11/circom.hpp"
+    #error "Invalid PROVER_FORK_ID"
 #endif
 #include "main.hpp"
 #include "prover.hpp"
@@ -365,6 +365,9 @@ int main(int argc, char **argv)
 
     // Create one instance of the Poseidon hash library
     PoseidonGoldilocks poseidon;
+
+    // Init globals
+    zkGlobalsInit();
 
 #ifdef DEBUG
     zklog.info("BN128 p-1 =" + bn128.toString(bn128.negOne(),16) + " = " + bn128.toString(bn128.negOne(),10));

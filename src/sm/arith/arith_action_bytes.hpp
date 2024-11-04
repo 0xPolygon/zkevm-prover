@@ -13,13 +13,18 @@ public:
     mpz_class y2;
     mpz_class x3;
     mpz_class y3;
-    uint64_t selEq0;
-    uint64_t selEq1;
-    uint64_t selEq2;
-    uint64_t selEq3;
-    uint64_t selEq4;
-    uint64_t selEq5;
-    uint64_t selEq6;
+
+    // Used in forks <= 12 :
+    //uint64_t selEq0;
+    //uint64_t selEq1;
+    //uint64_t selEq2;
+    //uint64_t selEq3;
+    //uint64_t selEq4;
+    //uint64_t selEq5;
+    //uint64_t selEq6;
+    
+    // Used in forks >= 13 :
+    uint64_t arithEq;
 
     // These arrays will contain 16-bit numbers, except the last (15) one, which can be up to 20-bits long
     // For this reason, we use 64-bit numbers, to have room for all possible values
@@ -40,6 +45,18 @@ public:
     uint64_t _q0[16];
     uint64_t _q1[16];
     uint64_t _q2[16];
+
+    string toString(void) {
+        string s;
+        s += "arithEq=" + to_string(arithEq) + " ";
+        s += "x1=" + x1.get_str(16) + " ";
+        s += "y1=" + y1.get_str(16) + " ";
+        s += "x2=" + x2.get_str(16) + " ";
+        s += "y2=" + y2.get_str(16) + " ";
+        s += "x3=" + x3.get_str(16) + " ";
+        s += "y3=" + y3.get_str(16) + " ";
+        return s;
+    }
 };
 
 #endif

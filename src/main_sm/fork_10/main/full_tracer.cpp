@@ -95,7 +95,8 @@ set<string> oocErrors = {
     "OOCM",
     "OOCA",
     "OOCPA",
-    "OOCPO" };
+    "OOCPO",
+    "OOCSH" };
 
 //////////
 // UTILS
@@ -108,6 +109,14 @@ inline zkresult getFromMemory(Context &ctx, mpz_class &offset, mpz_class &length
     uint64_t addrMem = offsetCtx + 0x20000;
 
     result = "";
+
+    // If length is too high this is due to an OOG that will stop processing; just pretend to have read nothing
+    if (length > ctx.rom.constants.MAX_MEM_EXPANSION_BYTES)
+    {
+        zklog.warning("getFromMemory() got length=" + length.get_str(10) + " > rom.constants.MAX_MEM_EXPANSION_BYTES=" + to_string(ctx.rom.constants.MAX_MEM_EXPANSION_BYTES));
+        return ZKR_SUCCESS;
+    }
+
     double init = addrMem + double(offset.get_ui()) / 32;
     double end = addrMem + double(offset.get_ui() + length.get_ui()) / 32;
     uint64_t initCeil = ceil(init);
@@ -340,7 +349,7 @@ zkresult FullTracer::handleEvent(Context &ctx, const RomCommand &cmd)
     {
         if ( (oocErrors.find(lastError)==oocErrors.end()) && (ctx.totalTransferredBalance != 0) )
         {
-            zklog.error("FullTracer::handleEvent(onFinishTx) found ctx.totalTransferredBalance=" + ctx.totalTransferredBalance.get_str(10));
+            zklog.error("FullTracer::handleEvent(onFinishTx) found ctx.totalTransferredBalance=" + ctx.totalTransferredBalance.get_str(10) + " lastError=" + lastError);
             return ZKR_SM_MAIN_BALANCE_MISMATCH;
         }
         return onFinishTx(ctx, cmd);
@@ -353,7 +362,7 @@ zkresult FullTracer::handleEvent(Context &ctx, const RomCommand &cmd)
     {
         if ( (oocErrors.find(lastError)==oocErrors.end()) && (ctx.totalTransferredBalance != 0) )
         {
-            zklog.error("FullTracer::handleEvent(onFinishBlock) found ctx.totalTransferredBalance=" + ctx.totalTransferredBalance.get_str(10));
+            zklog.error("FullTracer::handleEvent(onFinishBlock) found ctx.totalTransferredBalance=" + ctx.totalTransferredBalance.get_str(10) + " lastError=" + lastError);
             return ZKR_SM_MAIN_BALANCE_MISMATCH;
         }
         return onFinishBlock(ctx);
@@ -366,7 +375,7 @@ zkresult FullTracer::handleEvent(Context &ctx, const RomCommand &cmd)
     {
         if ( (oocErrors.find(lastError)==oocErrors.end()) && (ctx.totalTransferredBalance != 0) )
         {
-            zklog.error("FullTracer::handleEvent(onFinishBatch) found ctx.totalTransferredBalance=" + ctx.totalTransferredBalance.get_str(10));
+            zklog.error("FullTracer::handleEvent(onFinishBatch) found ctx.totalTransferredBalance=" + ctx.totalTransferredBalance.get_str(10) + " lastError=" + lastError);
             return ZKR_SM_MAIN_BALANCE_MISMATCH;
         }
         return onFinishBatch(ctx, cmd);
@@ -1494,15 +1503,6 @@ zkresult FullTracer::onOpcode(Context &ctx, const RomCommand &cmd)
 
     Opcode singleInfo;
 
-    if (ctx.proverRequest.input.bNoCounters)
-    {
-        full_trace.emplace_back(singleInfo);
-#ifdef LOG_TIME_STATISTICS
-        tms.add("onOpcode", TimeDiff(t));
-#endif
-        return ZKR_SUCCESS;
-    }
-
     mpz_class auxScalar;
 
 #ifdef LOG_TIME_STATISTICS
@@ -1530,6 +1530,16 @@ zkresult FullTracer::onOpcode(Context &ctx, const RomCommand &cmd)
 #ifdef LOG_TIME_STATISTICS
     tmsop.add("getCodeID", TimeDiff(top));
 #endif
+
+    if (ctx.proverRequest.input.bNoCounters && (codeId != 0xa0 /* LOG0 */))
+    {
+        full_trace.emplace_back(singleInfo);
+#ifdef LOG_TIME_STATISTICS
+        tms.add("onOpcode", TimeDiff(t));
+#endif
+        return ZKR_SUCCESS;
+    }
+
 #ifdef LOG_TIME_STATISTICS
     gettimeofday(&top, NULL);
 #endif
@@ -2123,7 +2133,7 @@ zkresult FullTracer::onOpcode(Context &ctx, const RomCommand &cmd)
     // If is an ether transfer, don't add stop opcode to trace
     bool bAddOpcode = true;
     if ( (singleInfo.op == 0x00 /*STOP*/) &&
-         ( (prevStep==NULL) || ( (opCreate.find(prevStep->opcode) != opCreate.end()) && (prevStep->gas_cost <= 32000))))
+         ( (prevStep==NULL) || ( (opCreate.find(prevStep->opcode) != opCreate.end()) && (prevStep->gas_cost <= 32000) && (prevStep->error == ""))))
     {
         zkr = getVarFromCtx(ctx, false, ctx.rom.bytecodeLengthOffset, auxScalar);
         if (zkr != ZKR_SUCCESS)
