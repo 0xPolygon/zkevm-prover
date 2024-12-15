@@ -1,16 +1,28 @@
 #include <iostream>
 #include "padding_pg_executor.hpp"
 #include "scalar.hpp"
+#include "utils.hpp"
+#include "poseidon_g_permutation.hpp"
+#include "goldilocks_precomputed.hpp"
+#include "zklog.hpp"
 
 using namespace std;
 
-void PaddingPGExecutor::prepareInput (vector<PaddingPGExecutorInput> &input)
+uint64_t PaddingPGExecutor::prepareInput (vector<PaddingPGExecutorInput> &input)
 {
-
+    uint64_t totalInputBytes = 0;
     for (uint64_t i=0; i<input.size(); i++)
     {
         if (input[i].data.length() > 0)
         {
+            // Make sure we got an even number of characters
+            if ((input[i].data.length()%2) != 0)
+            {
+                zklog.error("PaddingPGExecutor::prepareInput() detected at entry i=" + to_string(i) + " a odd data string length=" + to_string(input[i].data.length()));
+                exitProcess();
+            }
+
+            // Convert string (data) into binary (dataBytes)
             for (uint64_t c=0; c<input[i].data.length(); c+=2)
             {
                 uint8_t aux;
@@ -19,27 +31,33 @@ void PaddingPGExecutor::prepareInput (vector<PaddingPGExecutorInput> &input)
             }
         }
 
-        string hashString = keccak256(input[i].dataBytes);
-        input[i].hash.set_str(Remove0xIfPresent(hashString), 16);
+        keccak256(input[i].dataBytes, input[i].hash);
 
         input[i].realLen = input[i].dataBytes.size();
 
+        // Add padding
         input[i].dataBytes.push_back(0x1);
-
-
         while (input[i].dataBytes.size() % bytesPerBlock) input[i].dataBytes.push_back(0);
-
         input[i].dataBytes[ input[i].dataBytes.size() - 1] |= 0x80;
+
+        totalInputBytes += input[i].dataBytes.size();
     }
+    return totalInputBytes;
 }
 
-void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingPGCommitPols &pols, vector<array<Goldilocks::Element, 16>> &required)
-{
-    // TODO: How to control that we do not run out of evaluations?
-    
-    prepareInput(input);
+void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingPGCommitPols &pols, vector<array<Goldilocks::Element, 17>> &required)
+{    
+    uint64_t totalInputBytes = prepareInput(input);
+
+    // Check input size
+    if (totalInputBytes > N)
+    {
+        zklog.error("PaddingPGExecutor::execute() Too many entries totalInputBytes=" + to_string(totalInputBytes) + " > N=" + to_string(N));
+        exitProcess();
+    }
 
     uint64_t p = 0;
+    uint64_t pDone = 0;
 
     uint64_t addr = 0;
 
@@ -79,14 +97,26 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
 
             pols.len[p] = fr.fromU64(input[i].realLen);
             pols.addr[p] = fr.fromU64(addr);
-            pols.rem[p] = fr.fromU64(input[i].realLen - j);
+            pols.rem[p] = fr.sub(fr.fromU64(input[i].realLen), fr.fromU64(j));
             if (!fr.isZero(pols.rem[p]))
             {
-                pols.remInv[p] = fr.inv(pols.rem[p]);
+                pols.remInv[p] = glp.inv(pols.rem[p]);
                 if (fr.toU64(pols.rem[p]) > 0xFFFF) pols.spare[p] = fr.one();
             }
             
-            if (j == 0) pols.firstHash[p] = fr.one();
+            bool lastBlock = (p % bytesPerBlock) == (bytesPerBlock - 1);
+            bool lastHash = lastBlock && ((!fr.isZero(pols.spare[p])) || fr.isZero(pols.rem[p]));
+            if (lastHash)
+            {
+                if (input[i].lenCalled)
+                {
+                    pols.lastHashLen[p] = fr.one();
+                }
+                if (input[i].digestCalled)
+                {
+                    pols.lastHashDigest[p] = fr.one();
+                }
+            }
 
             if (lastOffset == 0)
             {
@@ -99,7 +129,7 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
                 pols.crLen[p] = pols.crLen[p-1];
                 pols.crOffset[p] = fr.sub(pols.crOffset[p-1], fr.one());
             }
-            if (!fr.isZero(pols.crOffset[p])) pols.crOffsetInv[p] = fr.inv(pols.crOffset[p]);
+            if (!fr.isZero(pols.crOffset[p])) pols.crOffsetInv[p] = glp.inv(pols.crOffset[p]);
 
             uint64_t crAccI = fr.toU64(pols.crOffset[p])/4;
             uint64_t crSh = (fr.toU64(pols.crOffset[p])%4)*8;
@@ -139,7 +169,7 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
                 pols.curHash2[p] = dataHash[2];
                 pols.curHash3[p] = dataHash[3];
 
-                array<Goldilocks::Element,16> aux;
+                array<Goldilocks::Element,17> aux;
                 aux[0] = pols.acc[0][p+1];
                 aux[1] = pols.acc[1][p+1];
                 aux[2] = pols.acc[2][p+1];
@@ -156,7 +186,17 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
                 aux[13] = pols.curHash1[p]; 
                 aux[14] = pols.curHash2[p]; 
                 aux[15] = pols.curHash3[p];
+                aux[16] = fr.fromU64(POSEIDONG_PERMUTATION4_ID);
                 required.push_back(aux);
+
+                pols.acc[0][p+1] = fr.zero();
+                pols.acc[1][p+1] = fr.zero();
+                pols.acc[2][p+1] = fr.zero();
+                pols.acc[3][p+1] = fr.zero();
+                pols.acc[4][p+1] = fr.zero();
+                pols.acc[5][p+1] = fr.zero();
+                pols.acc[6][p+1] = fr.zero();
+                pols.acc[7][p+1] = fr.zero();
 
                 for (uint64_t k=1; k<bytesPerBlock; k++)
                 {
@@ -169,9 +209,9 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
                 pols.prevHash1[p+1] = pols.curHash1[p];
                 pols.prevHash2[p+1] = pols.curHash2[p];
                 pols.prevHash3[p+1] = pols.curHash3[p];
-                pols.incCounter[p+1] = fr.add(pols.incCounter[p], fr.one());
+                pols.incCounter[p+1] = fr.inc(pols.incCounter[p]);
 
-                if (j == input[i].dataBytes.size() - 1)
+                if (j == (input[i].dataBytes.size() - 1))
                 {
                     pols.prevHash0[p+1] = fr.zero(); // TODO: Comment out?
                     pols.prevHash1[p+1] = fr.zero(); // TODO: Comment out?
@@ -186,6 +226,8 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
         }
         addr += 1;
     }
+
+    pDone = p;
 
     uint64_t nFullUnused = ((N - p - 1)/bytesPerBlock)+1;
 
@@ -206,7 +248,7 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
     Goldilocks::Element h0[4];
     poseidon.hash(h0, data);
 
-    array<Goldilocks::Element,16> aux;
+    array<Goldilocks::Element,17> aux;
     aux[0] = fr.one();
     aux[1] = fr.zero();
     aux[2] = fr.zero();
@@ -223,6 +265,7 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
     aux[13] = h0[1]; 
     aux[14] = h0[2]; 
     aux[15] = h0[3];
+    aux[16] = fr.fromU64(POSEIDONG_PERMUTATION4_ID);
     required.push_back(aux);
 
     for (uint64_t i=0; i<nFullUnused; i++)
@@ -230,7 +273,7 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
         uint64_t bytesBlock = ((N-p) > bytesPerBlock) ? bytesPerBlock : (N-p);
         if (bytesBlock < 2)
         {
-            cerr << "Error: PaddingPGExecutor::execute() Alignment is not possible" << endl;
+            zklog.error("PaddingPGExecutor::execute() Alignment is not possible");
         }
         for (uint64_t j=0; j<bytesBlock; j++)
         {
@@ -243,14 +286,11 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
                 pols.freeIn[p] = fr.fromU64(0x80);
             }
             if (j != 0) pols.acc[0][p] = fr.one();
+
             pols.addr[p] = fr.fromU64(addr);
             pols.rem[p] = fr.neg(fr.fromU64(j)); // = -j
-            if (!fr.isZero(pols.rem[p])) pols.remInv[p] = fr.inv(pols.rem[p]);
-            if (j == 0)
-            {
-                pols.firstHash[p] = fr.one();
-            }
-            else
+            if (!fr.isZero(pols.rem[p])) pols.remInv[p] = glp.inv(pols.rem[p]);
+            if (j != 0)
             {
                 pols.spare[p] = fr.one();
             }
@@ -271,5 +311,5 @@ void PaddingPGExecutor::execute (vector<PaddingPGExecutorInput> &input, PaddingP
         addr += 1;
     }
 
-    cout << "PaddingPGExecutor successfully processed " << input.size() << " Poseidon hashes" << endl;
+    zklog.info("PaddingPGExecutor successfully processed " + to_string(input.size()) + " Poseidon hashes p=" + to_string(p) + " pDone=" + to_string(pDone) + " (" + to_string((double(pDone)*100)/N) + "%)");
 }

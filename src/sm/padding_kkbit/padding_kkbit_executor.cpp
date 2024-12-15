@@ -1,71 +1,60 @@
 #include "padding_kkbit_executor.hpp"
 #include "sm/keccak_f/keccak.hpp"
+#include "timer.hpp"
+#include "definitions.hpp"
+#include "Keccak-more-compact.hpp"
+#include "zkmax.hpp"
+#include "zklog.hpp"
 
-
-uint64_t bitFromState (const uint64_t (&st)[5][5][2], uint64_t i)
+inline uint64_t getStateBit ( const uint8_t (&state)[200], uint64_t i )
 {
-    uint64_t y = i / 320;
-    uint64_t x = (i % 320) / 64;
-    uint64_t z = i % 64;
-    uint64_t z1 = z / 32;
-    uint64_t z2 = z%32;
-
-    return (st[x][y][z1] >> z2) & 1;
+    return (state[i/8] >> (i%8)) & 1;
 }
 
-void setStateBit (uint64_t (&st)[5][5][2], uint64_t i, uint64_t b)
+inline void setStateBit (uint8_t (&state)[200], uint64_t i, uint64_t b )
 {
-    uint64_t y = i/320;
-    uint64_t x = (i%320)/64;
-    uint64_t z = i%64;
-    uint64_t z1 = z/32;
-    uint64_t z2 = z%32;
-
-    st[x][y][z1] ^=  (b << z2);
+    state[i/8] ^= (b << (i%8));
 }
 
-void callKeccakF (const uint64_t (&input)[5][5][2], uint64_t (&output)[5][5][2])
+inline void callKeccakF (const uint8_t (&inputState)[200], uint8_t (&outputState)[200])
 {
-    // Copy input into state S
-    KeccakState S;
-    for (uint64_t i=0; i<1600; i++)
+    /* Copy inputState into OuputState */
+    memcpy(outputState, inputState, sizeof(outputState));
+
+    /* Call keccak-f (one single round) to update outputState */
+    KeccakF1600(outputState);
+}
+
+void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, PaddingKKBitCommitPols &pols, vector<Bits2FieldExecutorInput> &required)
+{
+#ifdef LOG_TIME_STATISTICS
+    struct timeval t;
+    uint64_t keccakTime=0, keccakTimes=0;
+#endif
+    // Check that input size does not exeed the number of slots
+    if (input.size() > nSlots)
     {
-        uint8_t bit = bitFromState(input, i);
-        S.gate[SinRef0 + i*9].pin[pin_a].bit = bit;
+        zklog.error("PaddingKKBitExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " > nSlots=" + to_string(nSlots));
+        exitProcess();
     }
 
-    // Call Keccak-f
-    KeccakF(S);
-    S.copySoutToSinAndResetRefs();
-    
-    // Reset output
-    memset(output, 0, sizeof(output));
-
-    // Add the corresponding bits
-    for (uint64_t i=0; i<1600; i++)
-    {
-        uint8_t bit = (S.gate[SinRef0 + i*9].pin[pin_a].bit & 1);
-        if (bit == 1) setStateBit(output, i, bit);
-    }
-}
-
-void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, PaddingKKBitCommitPols &pols, vector<Nine2OneExecutorInput> &required)
-{
     uint64_t curInput = 0;
     uint64_t p = 0;
-    //uint64_t v = 0;
+    uint64_t pDone = 0;
 
     // Convert pols.sOutX to and array, for programming convenience
     CommitPol sOut[8] = { pols.sOut0, pols.sOut1, pols.sOut2, pols.sOut3, pols.sOut4, pols.sOut5, pols.sOut6, pols.sOut7 };
 
-    uint64_t curState[5][5][2];
+    uint8_t currentState[200];
     bool bCurStateWritten = false;
 
     for (uint64_t i=0; i<nSlots; i++)
     {
         bool connected = true;
 
-        uint64_t stateWithR[5][5][2];
+        uint8_t stateWithR[200];
+
+        // If this is the first block of a message, or we run out of them, start from a reset state
         if ((curInput>=input.size()) || (input[curInput].connected == false))
         {
             connected = false;
@@ -73,13 +62,13 @@ void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, Pa
         }
         else
         {
-            // Copy: stateWithR = curState;
-            memcpy(&stateWithR, &curState, sizeof(stateWithR));
+            // Copy: stateWithR = currentState;
+            memcpy(&stateWithR, &currentState, sizeof(stateWithR));
         }
 
         for (uint64_t j=0; j<136; j++)
         {
-            uint8_t byte = (curInput < input.size()) ? input[curInput].r[j] : 0;
+            uint8_t byte = (curInput < input.size()) ? input[curInput].data[j] : 0;
             pols.r8[p] = fr.zero();
             for (uint64_t k=0; k<8; k++)
             {
@@ -87,7 +76,7 @@ void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, Pa
                 setStateBit(stateWithR, j*8+k, bit);
                 pols.rBit[p] = fr.fromU64(bit);
                 pols.r8[p+1] = fr.fromU64( fr.toU64(pols.r8[p]) | ((uint64_t(bit) << k)) );
-                if (bCurStateWritten) pols.sOutBit[p] = fr.fromU64( bitFromState(curState, j*8 + k) );
+                if (bCurStateWritten) pols.sOutBit[p] = fr.fromU64( getStateBit(currentState, j*8 + k) );
                 if (connected) pols.connected[p] = fr.one();
                 p++;
             }
@@ -98,25 +87,30 @@ void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, Pa
         
         for (uint64_t j=0; j<512; j++)
         {
-            if (bCurStateWritten) pols.sOutBit[p] = fr.fromU64( bitFromState(curState, 136*8 + j) );
+            if (bCurStateWritten) pols.sOutBit[p] = fr.fromU64( getStateBit(currentState, 136*8 + j) );
             if (connected) pols.connected[p] = fr.one();
             p++;
         }
-
-        callKeccakF(stateWithR, curState);
+#ifdef LOG_TIME_STATISTICS
+        gettimeofday(&t, NULL);
+#endif
+        callKeccakF(stateWithR, currentState);
         bCurStateWritten = true;
+#ifdef LOG_TIME_STATISTICS
+        keccakTime += TimeDiff(t);
+        keccakTimes+=1;
+#endif
+        Bits2FieldExecutorInput bits2FieldExecutorInput;
+        // Copy: bits2FieldExecutorInput.inputState = stateWithR
+        memcpy(&bits2FieldExecutorInput.inputState, stateWithR, sizeof(bits2FieldExecutorInput.inputState));
+        // Copy: bits2FieldExecutorInput.outputState = currentState
+        memcpy(&bits2FieldExecutorInput.outputState, currentState, sizeof(bits2FieldExecutorInput.outputState));
 
-        Nine2OneExecutorInput nine2OneExecutorInput;
-        // Copy: nine2OneExecutorInput.st[0] = stateWithR
-        memcpy(&nine2OneExecutorInput.st[0], stateWithR, sizeof(nine2OneExecutorInput.st[0]));
-        // Copy: nine2OneExecutorInput.st[1] = curState
-        memcpy(&nine2OneExecutorInput.st[1], curState, sizeof(nine2OneExecutorInput.st[1]));
-
-        required.push_back(nine2OneExecutorInput);
+        required.push_back(bits2FieldExecutorInput);
 
         for (uint64_t j=0; j<256; j++)
         {
-            pols.sOutBit[p] = fr.fromU64( bitFromState(curState, j) );
+            pols.sOutBit[p] = fr.fromU64( getStateBit(currentState, j) );
             if (connected) pols.connected[p] = fr.one();
 
             uint64_t bit = j%8;
@@ -141,13 +135,15 @@ void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, Pa
         curInput++;
     }
 
+    pDone = p;
+
     // Connect the last state with the first
     uint64_t pp = 0;
     for (uint64_t j=0; j<136; j++)
     {
         for (uint64_t k=0; k<8; k++)
         {
-            pols.sOutBit[pp] = fr.fromU64( bitFromState(curState, j*8 + k) );
+            pols.sOutBit[pp] = fr.fromU64( getStateBit(currentState, j*8 + k) );
             pp += 1;
         }
         pols.sOutBit[pp] = fr.zero();
@@ -156,10 +152,13 @@ void PaddingKKBitExecutor::execute (vector<PaddingKKBitExecutorInput> &input, Pa
 
     for (uint64_t j=0; j<512; j++)
     {
-        pols.sOutBit[pp] = fr.fromU64( bitFromState(curState, 136*8 + j) );
+        pols.sOutBit[pp] = fr.fromU64( getStateBit(currentState, 136*8 + j) );
         pp++;
     }
 
-    cout << "PaddingKKBitExecutor successfully processed " << input.size() << " Keccak actions" << endl;
+    zklog.info("PaddingKKBitExecutor successfully processed " + to_string(input.size()) + " Keccak actions p=" + to_string(p) + " pDone=" + to_string(pDone) + " (" + to_string((double(pDone)*100)/N) + "%)");
+#ifdef LOG_TIME_STATISTICS
+    zklog.info("TIMER STATISTICS: PaddingKKBitExecutor: Keccak time: " + to_string(double(keccakTime)/1000) + " ms, called " + to_string(keccakTimes) + " times, so " + to_string(keccakTime/zkmax(keccakTimes,(uint64_t)1)) + " us/time");
+#endif
 }
 

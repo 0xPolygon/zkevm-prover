@@ -3,9 +3,13 @@
 
 #include <vector>
 #include <gmpxx.h>
-#include "commit_pols.hpp"
+#include "definitions.hpp"
+#include "sm/pols_generated/commit_pols.hpp"
 #include "goldilocks_base_field.hpp"
 #include "sm/padding_kkbit/padding_kkbit_executor.hpp"
+#include "scalar.hpp"
+
+USING_PROVER_FORK_NAMESPACE;
 
 using namespace std;
 
@@ -17,26 +21,44 @@ public:
     uint64_t realLen;
     vector<uint64_t> reads;
     mpz_class hash;
-    PaddingKKExecutorInput() : realLen(0) {};
+    bool digestCalled;
+    bool lenCalled;
+    PaddingKKExecutorInput() : realLen(0), digestCalled(false), lenCalled(false) {};
 };
 
 class PaddingKKExecutor
 {
 private:
+
+    /* Goldilocks reference */
     Goldilocks &fr;
+
+    /* Constant values */
     const uint64_t blockSize;
     const uint64_t bytesPerBlock;
     const uint64_t N;
 
-void prepareInput (vector<PaddingKKExecutorInput> &input);
+    /* Hash of an empty/zero message */
+    mpz_class hashZeroScalar;
+    Goldilocks::Element hash0[8];
+
+uint64_t prepareInput (vector<PaddingKKExecutorInput> &input);
 
 public:
+
+    /* Constructor */
     PaddingKKExecutor(Goldilocks &fr) :
         fr(fr),
-        blockSize(158418),
+        blockSize(155286),
         bytesPerBlock(136),
-        N(PaddingKKCommitPols::pilDegree()) {};
-    void execute (vector<PaddingKKExecutorInput> &input, PaddingKKCommitPols &pols, vector<PaddingKKBitExecutorInput> &required);
+        N(PROVER_FORK_NAMESPACE::PaddingKKCommitPols::pilDegree())
+    {
+        keccak256(NULL, 0, hashZeroScalar);
+        scalar2fea(fr, hashZeroScalar, hash0);
+    };
+
+    /* Executor */
+    void execute (vector<PaddingKKExecutorInput> &input, PROVER_FORK_NAMESPACE::PaddingKKCommitPols &pols, vector<PaddingKKBitExecutorInput> &required);
 };
 
 

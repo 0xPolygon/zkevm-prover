@@ -10,14 +10,7 @@ public:
     uint8_t b_bytes[32];
     uint8_t c_bytes[32];
     uint64_t opcode;
-
-    BinaryActionBytes()
-    {
-        memset(a_bytes, 0, 32);
-        memset(b_bytes, 0, 32);
-        memset(b_bytes, 0, 32);
-        opcode = 0;
-    }
+    uint64_t type;
 };
 
 #endif

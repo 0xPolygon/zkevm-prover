@@ -1,18 +1,28 @@
-
 #include <nlohmann/json.hpp>
 #include "storage_executor.hpp"
 #include "storage_rom.hpp"
 #include "utils.hpp"
 #include "scalar.hpp"
+#include "poseidon_g_permutation.hpp"
+#include "goldilocks_precomputed.hpp"
+#include "zklog.hpp"
+#include "exit_process.hpp"
+#include "climb_key_executor.hpp"
 
 using json = nlohmann::json;
 using namespace std;
 
-void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pols, vector<array<Goldilocks::Element, 16>> &required)
+#define PRE_CLIMB_UP_LIMIT 0x7FFFFFFF80000000ULL
+
+//#define LOG_STORAGE_EXECUTOR
+//#define LOG_STORAGE_EXECUTOR_ROM_LINE
+
+void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pols, vector<array<Goldilocks::Element, 17>> &poseidonRequired, vector<ClimbKeyAction> &climbKeyRequired)
 {
     uint64_t l=0; // rom line number, so current line is rom.line[l]
     uint64_t a=0; // action number, so current action is action[a]
     bool actionListEmpty = (action.size()==0); // becomes true when we run out of actions
+    uint64_t lastStep = 0; // Set to the first evaluation that calls isAlmostEndPolynomial
 
     // Init the context if the list is not empty
     SmtActionContext ctx;
@@ -34,12 +44,14 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
         uint64_t nexti = (i+1)%N;
 
 #ifdef LOG_STORAGE_EXECUTOR_ROM_LINE
+        string source = "";
         if (rom.line[l].funcName!="isAlmostEndPolynomial")
         {
-            rom.line[l].print(l); // Print the rom line content 
+            source = rom.line[l].fileName.substr(8, rom.line[l].fileName.length() - 14) + ":" + to_string(rom.line[l].line);
+            printf("[SR%04d I%03d %-28s] %s\n", (int)l, (int)a, source.c_str(), rom.line[l].lineStr.c_str());
+            // rom.line[l].print(l); // Print the rom line content
         }
 #endif
-
         /*************/
         /* Selectors */
         /*************/
@@ -49,6 +61,8 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
 
         if (rom.line[l].inFREE)
         {
+            const int64_t currentLevel = fr.toU64(pols.level[i]);
+
             if (rom.line[l].op == "functionCall")
             {
                 /* Possible values of mode when action is SMT Set:
@@ -69,7 +83,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isUpdate returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isUpdate returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -82,7 +96,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isInsertFound returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isInsertFound returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -95,20 +109,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isInsertNotFound returns " << fea2string(fr, op) << endl;
-#endif
-                    }
-                }
-                else if (rom.line[l].funcName == "isSetReplacingZero")
-                {
-                    if (!actionListEmpty &&
-                        action[a].bIsSet &&
-                        action[a].setResult.mode == "insertNotFound")
-                    {
-                        op[0] = fr.one();
-
-#ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isSetReplacingZero returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isInsertNotFound returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -121,7 +122,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isDeleteLast returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isDeleteLast returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -134,7 +135,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isSetDeleteFound returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isSetDeleteFound returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -147,7 +148,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isSetDeleteNotFound returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isSetDeleteNotFound returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -160,7 +161,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isZeroToZero returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isZeroToZero returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -172,7 +173,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     {
                         op[0] = fr.one();
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isOld0 returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isOld0 returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -186,7 +187,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                         op[0] = fr.one();
 
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isGet returns " << fea2string(fr, op) << endl;
+                        zklog.info("StorageExecutor isGet returns " + fea2string(fr, op));
 #endif
                     }
                 }
@@ -200,7 +201,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = ctx.rKey[3];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetRkey returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetRkey returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -213,7 +214,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = ctx.siblingRKey[3];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetSiblingRkey returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetSiblingRkey returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -223,26 +224,78 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 {
                     if (action[a].bIsSet)
                     {
-                        op[0] = action[a].setResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4];
-                        op[1] = action[a].setResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4+1];
-                        op[2] = action[a].setResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4+2];
-                        op[3] = action[a].setResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4+3];
+                        op[0] = action[a].setResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4];
+                        op[1] = action[a].setResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4+1];
+                        op[2] = action[a].setResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4+2];
+                        op[3] = action[a].setResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4+3];
                     }
                     else
                     {
-                        op[0] = action[a].getResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4];
-                        op[1] = action[a].getResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4+1];
-                        op[2] = action[a].getResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4+2];
-                        op[3] = action[a].getResult.siblings[ctx.currentLevel][(1-ctx.bits[ctx.currentLevel])*4+3];
+                        op[0] = action[a].getResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4];
+                        op[1] = action[a].getResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4+1];
+                        op[2] = action[a].getResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4+2];
+                        op[3] = action[a].getResult.siblings[currentLevel][(1-ctx.bits[currentLevel])*4+3];
                     }
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetSiblingHash returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetSiblingHash returns " + fea2string(fr, op));
+#endif
+                }
+                else if (rom.line[l].funcName=="GetSiblingLeftChildHash")
+                {
+                    if (action[a].bIsSet)
+                    {
+                        op[0] = action[a].setResult.siblingLeftChild[0];
+                        op[1] = action[a].setResult.siblingLeftChild[1];
+                        op[2] = action[a].setResult.siblingLeftChild[2];
+                        op[3] = action[a].setResult.siblingLeftChild[3];
+                    }
+                    else
+                    {
+                        zklog.error("StorageExecutor.execute() called GetSiblingLeftChildHash() on GET operation input = " + to_string(a));
+                        exitProcess();
+                    }
+
+// #ifdef LOG_STORAGE_EXECUTOR
+                    zklog.info("StorageExecutor GetSiblingLeftChildHash returns " + fea2string(fr, op) + " input=" + to_string(a));
+// #endif
+                }
+                else if (rom.line[l].funcName=="GetSiblingRightChildHash")
+                {
+                    if (action[a].bIsSet)
+                    {
+                        op[0] = action[a].setResult.siblingRightChild[0];
+                        op[1] = action[a].setResult.siblingRightChild[1];
+                        op[2] = action[a].setResult.siblingRightChild[2];
+                        op[3] = action[a].setResult.siblingRightChild[3];
+                    }
+                    else
+                    {
+                        zklog.error("StorageExecutor.execute() called GetSiblingRightChildHash() on GET operation input = " + to_string(a));
+                        exitProcess();
+                    }
+
+// #ifdef LOG_STORAGE_EXECUTOR
+                    zklog.info("StorageExecutor GetSiblingRightChildHash returns " + fea2string(fr, op) + " input=" + to_string(a));
+// #endif
+                }
+
+                // Return if value is zero
+
+                else if (rom.line[l].funcName=="isValueZero")
+                {
+                    // if ctionList is empty => finish, value is zero
+                    if (actionListEmpty || (action[a].bIsSet ? action[a].setResult.newValue : action[a].getResult.value) == 0) {
+                        op[0] = fr.one();
+                    }
+
+#ifdef LOG_STORAGE_EXECUTOR
+                    zklog.info("StorageExecutor isValueZero returns " + fea2string(fr, op));
 #endif
                 }
 
                 // Value is an u256 split in 8 u32 chuncks, each one stored in the lower 32 bits of an u63 field element
-                // u63 means that it is not an u64, since some of the possible values are lost due to the prime effect 
+                // u63 means that it is not an u64, since some of the possible values are lost due to the prime effect
 
                 // Get the lower 4 field elements of the value
                 else if (rom.line[l].funcName=="GetValueLow")
@@ -255,7 +308,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = fea[3];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetValueLow returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetValueLow returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -270,7 +323,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = fea[7];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetValueHigh returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetValueHigh returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -285,7 +338,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = fea[3];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetSiblingValueLow returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetSiblingValueLow returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -300,7 +353,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = fea[7];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetSiblingValueHigh returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetSiblingValueHigh returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -310,7 +363,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     // This call only makes sense then this is an SMT set
                     if (!action[a].bIsSet)
                     {
-                        cerr << "Error: StorageExecutor() GetOldValueLow called in an SMT get action" << endl;
+                        zklog.error("StorageExecutor() GetOldValueLow called in an SMT get action");
                         exitProcess();
                     }
 
@@ -325,7 +378,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = fea[3];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetOldValueLow returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetOldValueLow returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -335,7 +388,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     // This call only makes sense then this is an SMT set
                     if (!action[a].bIsSet)
                     {
-                        cerr << "Error: StorageExecutor() GetOldValueLow called in an SMT get action" << endl;
+                        zklog.error("StorageExecutor() GetOldValueLow called in an SMT get action");
                         exitProcess();
                     }
 
@@ -350,38 +403,28 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[3] = fea[7];
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetOldValueHigh returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetOldValueHigh returns " + fea2string(fr, op));
 #endif
                 }
 
-                // Get the level bit, i.e. the bit x (specified by the parameter) of the level number
-                else if (rom.line[l].funcName=="GetLevelBit")
+                // Get the level number
+                else if (rom.line[l].funcName=="GetLevel")
                 {
-                    // Check that we have the one single parameter: the bit number
-                    if (rom.line[l].params.size()!=1)
+                    // Check that we have the no parameters
+                    if (rom.line[l].params.size()!=0)
                     {
-                        cerr << "Error: StorageExecutor() called with GetLevelBit but wrong number of parameters=" << rom.line[l].params.size() << endl;
-                        exitProcess();
-                    }
-
-                    // Get the bit parameter
-                    uint64_t bit = rom.line[l].params[0];
-
-                    // Check that the bit is either 0 or 1
-                    if (bit!=0 && bit!=1)
-                    {
-                        cerr << "Error: StorageExecutor() called with GetLevelBit but wrong bit=" << bit << endl;
+                        zklog.error("StorageExecutor() called with GetBit but wrong number of parameters=" + to_string(rom.line[l].params.size()));
                         exitProcess();
                     }
 
                     // Set the bit in op[0]
-                    if ( ( ctx.level & (1<<bit) ) != 0)
+                    if (ctx.level)
                     {
-                        op[0] = fr.one();
+                        op[0] = fr.fromU64(ctx.level);
                     }
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetLevelBit(" << bit << ") returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetLevel() returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -389,13 +432,13 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 else if (rom.line[l].funcName=="GetTopTree")
                 {
                     // Return 0 only if we reached the end of the tree, i.e. if the current level is 0
-                    if (ctx.currentLevel > 0)
+                    if (currentLevel > 0)
                     {
                         op[0] = fr.one();
                     }
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetTopTree returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetTopTree returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -404,13 +447,13 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 {
                     // If we have consumed enough key bits to reach the deepest level of the siblings array, then we are at the top of the branch and we can start climing the tree
                     int64_t siblingsSize = action[a].bIsSet ? action[a].setResult.siblings.size() : action[a].getResult.siblings.size();
-                    if (ctx.currentLevel > siblingsSize )
+                    if (currentLevel > siblingsSize )
                     {
                         op[0] = fr.one();
                     }
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetTopOfBranch returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetTopOfBranch returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -422,7 +465,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     ctx.currentLevel--;
                     if (ctx.currentLevel<0)
                     {
-                        cerr << "Error: StorageExecutor.execute() GetNextKeyBit() found ctx.currentLevel<0" << endl;
+                        zklog.error("StorageExecutor.execute() GetNextKeyBit() found ctx.currentLevel<0 =" + to_string(ctx.currentLevel));
                         exitProcess();
                     }
 
@@ -430,7 +473,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     op[0] = fr.fromU64(ctx.bits[ctx.currentLevel]);
 
 #ifdef LOG_STORAGE_EXECUTOR
-                    cout << "StorageExecutor GetNextKeyBit returns " << fea2string(fr, op) << endl;
+                    zklog.info("StorageExecutor GetNextKeyBit returns " + fea2string(fr, op));
 #endif
                 }
 
@@ -442,26 +485,63 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                     {
                         op[0] = fr.one();
 #ifdef LOG_STORAGE_EXECUTOR
-                        cout << "StorageExecutor isEndPolynomial returns " << fea2string(fr,op) << endl;
+                        zklog.info("StorageExecutor isEndPolynomial returns " + fea2string(fr,op));
 #endif
                     }
+
+                    // Record the first time isAlmostEndPolynomial is called
+                    if (lastStep == 0) lastStep = i;
                 }
                 else
                 {
-                    cerr << "Error: StorageExecutor() unknown funcName:" << rom.line[l].funcName << endl;
+                    zklog.error("StorageExecutor() unknown funcName:" + rom.line[l].funcName);
                     exitProcess();
-                }                
+                }
+            }
+            else if (rom.line[l].climbRkey) {
+                const int bit = rom.line[l].climbBitN? 1 - fr.toU64(pols.rkeyBit[i]) : fr.toU64(pols.rkeyBit[i]);
+                const int level = fr.toU64(pols.level[i]);
+                const int zlevel = level % 4;
+                Goldilocks::Element rkeys[4] = {pols.rkey0[i], pols.rkey1[i], pols.rkey2[i], pols.rkey3[i]};
+                Goldilocks::Element rkeyClimbed;
+
+                if (!ClimbKeyHelper::calculate(fr, rkeys[zlevel], bit, rkeyClimbed)) {
+                    zklog.error("StorageExecutor() ClimbRkey fails because rkey["+to_string(zlevel)+"] has an invalid value ("+fr.toString(rkeys[zlevel])+") before climb with bit="+to_string(bit));
+                    exitProcess();
+                }
+                rkeys[zlevel] = rkeyClimbed;
+                op[0] = rkeys[0];
+                op[1] = rkeys[1];
+                op[2] = rkeys[2];
+                op[3] = rkeys[3];
+            }
+            else if (rom.line[l].climbSiblingRkey) {
+                const int bit = rom.line[l].climbBitN? 1 - fr.toU64(pols.rkeyBit[i]) : fr.toU64(pols.rkeyBit[i]);
+                const int level = fr.toU64(pols.level[i]);
+                const int zlevel = level % 4;
+                Goldilocks::Element rkeys[4] = {pols.siblingRkey0[i], pols.siblingRkey1[i], pols.siblingRkey2[i], pols.siblingRkey3[i]};
+                Goldilocks::Element rkeyClimbed;
+
+                if (!ClimbKeyHelper::calculate(fr, rkeys[zlevel], bit, rkeyClimbed)) {
+                    zklog.error("StorageExecutor() climbSiblingRkey fails because siblingRkey["+to_string(zlevel)+"] has an invalid value ("+fr.toString(rkeys[zlevel])+") before climb with bit="+to_string(bit));
+                    exitProcess();
+                }
+                rkeys[zlevel] = rkeyClimbed;
+                op[0] = rkeys[0];
+                op[1] = rkeys[1];
+                op[2] = rkeys[2];
+                op[3] = rkeys[3];
             }
 
-            // Ignore; this is just to report a list of setters 
+            // Ignore; this is just to report a list of setters
             else if (rom.line[l].op=="")
-            {                
+            {
             }
 
             // Any other value is an unexpected value
             else
             {
-                cerr << "Error: StorageExecutor() unknown op:" << rom.line[l].op << endl;
+                zklog.error("StorageExecutor() unknown op:" + rom.line[l].op);
                 exitProcess();
             }
 
@@ -469,117 +549,120 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             if (!fr.isZero(op[0])) pols.free0[i] = op[0];
             if (!fr.isZero(op[1])) pols.free1[i] = op[1];
             if (!fr.isZero(op[2])) pols.free2[i] = op[2];
-            if (!fr.isZero(op[3])) pols.free3[i] = op[3];            
+            if (!fr.isZero(op[3])) pols.free3[i] = op[3];
 
             // Mark the selFree register as 1
             pols.inFree[i] = fr.one();
         }
 
-        // If a constant is provided, set op to the constant
+        // If a constant is provided, add constant to op0
         if (rom.line[l].CONST!="")
         {
             // Convert constant to scalar
             mpz_class constScalar;
             constScalar.set_str(rom.line[l].CONST, 10);
+            Goldilocks::Element const0 = fr.fromS64(constScalar.get_si());
+            op[0] = fr.add(op[0], const0);
 
-            // Convert scalar to field element array
-            scalar2fea(fr, constScalar, op);
-            
             // Store constant field elements in their registers
-            pols.iConst0[i] = op[0];
-            pols.iConst1[i] = op[1];
-            pols.iConst2[i] = op[2];
-            pols.iConst3[i] = op[3];
+            pols.const0[i] = const0;
         }
 
         // If inOLD_ROOT then op=OLD_ROOT
         if (rom.line[l].inOLD_ROOT)
         {
-            op[0] = pols.oldRoot0[i];
-            op[1] = pols.oldRoot1[i];
-            op[2] = pols.oldRoot2[i];
-            op[3] = pols.oldRoot3[i];
+            op[0] = fr.add(op[0], pols.oldRoot0[i]);
+            op[1] = fr.add(op[1], pols.oldRoot1[i]);
+            op[2] = fr.add(op[2], pols.oldRoot2[i]);
+            op[3] = fr.add(op[3], pols.oldRoot3[i]);
             pols.inOldRoot[i] = fr.one();
         }
 
         // If inNEW_ROOT then op=NEW_ROOT
         if (rom.line[l].inNEW_ROOT)
         {
-            op[0] = pols.newRoot0[i];
-            op[1] = pols.newRoot1[i];
-            op[2] = pols.newRoot2[i];
-            op[3] = pols.newRoot3[i];
+            op[0] = fr.add(op[0], pols.newRoot0[i]);
+            op[1] = fr.add(op[1], pols.newRoot1[i]);
+            op[2] = fr.add(op[2], pols.newRoot2[i]);
+            op[3] = fr.add(op[3], pols.newRoot3[i]);
             pols.inNewRoot[i] = fr.one();
         }
 
         // If inRKEY_BIT then op=RKEY_BIT
         if (rom.line[l].inRKEY_BIT)
         {
-            op[0] = pols.rkeyBit[i];
-            op[1] = fr.zero();
-            op[2] = fr.zero();
-            op[3] = fr.zero();
+            op[0] = fr.add(op[0], pols.rkeyBit[i]);
+            op[1] = fr.add(op[1], fr.zero());
+            op[2] = fr.add(op[2], fr.zero());
+            op[3] = fr.add(op[3], fr.zero());
             pols.inRkeyBit[i] = fr.one();
         }
 
         // If inVALUE_LOW then op=VALUE_LOW
         if (rom.line[l].inVALUE_LOW)
         {
-            op[0] = pols.valueLow0[i];
-            op[1] = pols.valueLow1[i];
-            op[2] = pols.valueLow2[i];
-            op[3] = pols.valueLow3[i];
+            op[0] = fr.add(op[0], pols.valueLow0[i]);
+            op[1] = fr.add(op[1], pols.valueLow1[i]);
+            op[2] = fr.add(op[2], pols.valueLow2[i]);
+            op[3] = fr.add(op[3], pols.valueLow3[i]);
             pols.inValueLow[i] = fr.one();
         }
 
         // If inVALUE_HIGH then op=VALUE_HIGH
         if (rom.line[l].inVALUE_HIGH)
         {
-            op[0] = pols.valueHigh0[i];
-            op[1] = pols.valueHigh1[i];
-            op[2] = pols.valueHigh2[i];
-            op[3] = pols.valueHigh3[i];
+            op[0] = fr.add(op[0], pols.valueHigh0[i]);
+            op[1] = fr.add(op[1], pols.valueHigh1[i]);
+            op[2] = fr.add(op[2], pols.valueHigh2[i]);
+            op[3] = fr.add(op[3], pols.valueHigh3[i]);
             pols.inValueHigh[i] = fr.one();
         }
 
         // If inRKEY then op=RKEY
         if (rom.line[l].inRKEY)
         {
-            op[0] = pols.rkey0[i];
-            op[1] = pols.rkey1[i];
-            op[2] = pols.rkey2[i];
-            op[3] = pols.rkey3[i];
+            op[0] = fr.add(op[0], pols.rkey0[i]);
+            op[1] = fr.add(op[1], pols.rkey1[i]);
+            op[2] = fr.add(op[2], pols.rkey2[i]);
+            op[3] = fr.add(op[3], pols.rkey3[i]);
             pols.inRkey[i] = fr.one();
         }
 
         // If inSIBLING_RKEY then op=SIBLING_RKEY
         if (rom.line[l].inSIBLING_RKEY)
         {
-            op[0] = pols.siblingRkey0[i];
-            op[1] = pols.siblingRkey1[i];
-            op[2] = pols.siblingRkey2[i];
-            op[3] = pols.siblingRkey3[i];
-            pols.inSiblingRkey[i] = fr.one();
+            pols.inSiblingRkey[i] = fr.fromS64(rom.line[l].inSIBLING_RKEY);
+            op[0] = fr.add(op[0], fr.mul(pols.inSiblingRkey[i], pols.siblingRkey0[i]));
+            op[1] = fr.add(op[1], fr.mul(pols.inSiblingRkey[i], pols.siblingRkey1[i]));
+            op[2] = fr.add(op[2], fr.mul(pols.inSiblingRkey[i], pols.siblingRkey2[i]));
+            op[3] = fr.add(op[3], fr.mul(pols.inSiblingRkey[i], pols.siblingRkey3[i]));
         }
 
         // If inSIBLING_VALUE_HASH then op=SIBLING_VALUE_HASH
         if (rom.line[l].inSIBLING_VALUE_HASH)
         {
-            op[0] = pols.siblingValueHash0[i];
-            op[1] = pols.siblingValueHash1[i];
-            op[2] = pols.siblingValueHash2[i];
-            op[3] = pols.siblingValueHash3[i];
+            op[0] = fr.add(op[0], pols.siblingValueHash0[i]);
+            op[1] = fr.add(op[1], pols.siblingValueHash1[i]);
+            op[2] = fr.add(op[2], pols.siblingValueHash2[i]);
+            op[3] = fr.add(op[3], pols.siblingValueHash3[i]);
             pols.inSiblingValueHash[i] = fr.one();
         }
 
         // If inROTL_VH then op=rotate_left(VALUE_HIGH)
         if (rom.line[l].inROTL_VH)
         {
-            op[0] = pols.valueHigh3[i];
-            op[1] = pols.valueHigh0[i];
-            op[2] = pols.valueHigh1[i];
-            op[3] = pols.valueHigh2[i];
+            op[0] = fr.add(op[0], pols.valueHigh3[i]);
+            op[1] = fr.add(op[1], pols.valueHigh0[i]);
+            op[2] = fr.add(op[2], pols.valueHigh1[i]);
+            op[3] = fr.add(op[3], pols.valueHigh2[i]);
             pols.inRotlVh[i] = fr.one();
+        }
+
+        // If inROTL_VH then op=rotate_left(VALUE_HIGH)
+        if (rom.line[l].inLEVEL)
+        {
+            pols.inLevel[i] = fr.one();
+            op[0] = fr.add(op[0], pols.level[i]);
         }
 
         /****************/
@@ -587,28 +670,44 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
         /****************/
 
         // JMPZ: Jump if OP==0
-        if (rom.line[l].iJmpz)
+        if (rom.line[l].jmpz)
         {
             if (fr.isZero(op[0]))
             {
-                pols.pc[nexti] = fr.fromU64(rom.line[l].address);
-                //cout << "StorageExecutor iJmpz address=" << rom.line[l].address << endl;
+                pols.pc[nexti] = fr.fromU64(rom.line[l].jmpAddress);
+                //zklog.info("StorageExecutor jmpz jmpAddress=" + to_string(rom.line[l].jmpAddress));
             }
             else
             {
                 pols.pc[nexti] = fr.add(pols.pc[i], fr.one());
             }
-            pols.iAddress[i] = fr.fromU64(rom.line[l].address);
-            pols.iJmpz[i] = fr.one();
+            pols.jmpAddress[i] = fr.fromU64(rom.line[l].jmpAddress);
+            pols.jmpz[i] = fr.one();
+        }
+
+        // JMPNZ: Jump if OP!=0
+        else if (rom.line[l].jmpnz)
+        {
+            if (fr.isZero(op[0]))
+            {
+                pols.pc[nexti] = fr.add(pols.pc[i], fr.one());
+            }
+            else
+            {
+                pols.pc[nexti] = fr.fromU64(rom.line[l].jmpAddress);
+                //zklog.info("StorageExecutor jmpz jmpAddress=" + to_string(rom.line[l].jmpAddress));
+            }
+            pols.jmpAddress[i] = fr.fromU64(rom.line[l].jmpAddress);
+            pols.jmpnz[i] = fr.one();
         }
 
         // JMP: Jump always
-        else if (rom.line[l].iJmp)
+        else if (rom.line[l].jmp)
         {
-            pols.pc[nexti] = fr.fromU64(rom.line[l].address);
-            pols.iAddress[i] = fr.fromU64(rom.line[l].address);
-            //cout << "StorageExecutor iJmp address=" << rom.line[l].address << endl;
-            pols.iJmp[i] = fr.one();
+            pols.pc[nexti] = fr.fromU64(rom.line[l].jmpAddress);
+            pols.jmpAddress[i] = fr.fromU64(rom.line[l].jmpAddress);
+            //zklog.info("StorageExecutor iJmp jmpAddress=" + to_string(rom.line[l].jmpAddress));
+            pols.jmp[i] = fr.one();
         }
 
         // If not any jump, then simply increment program counter
@@ -617,22 +716,8 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.pc[nexti] = fr.add(pols.pc[i], fr.one());
         }
 
-        // Rotate level registers values, from higher to lower
-        if (rom.line[l].iRotateLevel)
-        {
-            pols.level0[nexti] = pols.level1[i];
-            pols.level1[nexti] = pols.level2[i];
-            pols.level2[nexti] = pols.level3[i];
-            pols.level3[nexti] = pols.level0[i];
-            pols.iRotateLevel[i] = fr.one();
-
-#ifdef LOG_STORAGE_EXECUTOR
-            cout << "StorageExecutor iRotateLevel level[3:2:1:0]=" << fr.toU64(pols.level3[i]) << ":" << fr.toU64(pols.level2[i]) << ":" << fr.toU64(pols.level1[i]) << ":" << fr.toU64(pols.level0[i]) << endl;
-#endif
-        }
-
         // Hash: op = poseidon.hash(HASH_LEFT + HASH_RIGHT + (0 or 1, depending on iHashType))
-        if (rom.line[l].iHash)
+        if (rom.line[l].hash)
         {
             // Prepare the data to hash: HASH_LEFT + HASH_RIGHT + 0 or 1, depending on iHashType
             Goldilocks::Element fea[12];
@@ -644,18 +729,18 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             fea[5] = pols.hashRight1[i];
             fea[6] = pols.hashRight2[i];
             fea[7] = pols.hashRight3[i];
-            if (rom.line[l].iHashType==0)
+            if (rom.line[l].hashType==0)
             {
                 fea[8] = fr.zero();
             }
-            else if (rom.line[l].iHashType==1)
+            else if (rom.line[l].hashType==1)
             {
                 fea[8] = fr.one();
-                pols.iHashType[i] = fr.one();
+                pols.hashType[i] = fr.one();
             }
             else
             {
-                cerr << "Error: StorageExecutor:execute() found invalid iHashType=" << rom.line[l].iHashType << endl;
+                zklog.error("StorageExecutor:execute() found invalid iHashType=" + to_string(rom.line[l].hashType));
                 exitProcess();
             }
             fea[9] = fr.zero();
@@ -667,7 +752,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             for (uint64_t i=0; i<12; i++) auxFea[i] = fea[i];
 #endif
             // To be used to load required poseidon data
-            array<Goldilocks::Element,16> req;
+            array<Goldilocks::Element,17> req;
             for (uint64_t j=0; j<12; j++)
             {
                 req[j] = fea[j];
@@ -688,156 +773,103 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             op[2] = fr.add(op[2], fr.mul(fr.fromU64(rom.line[l].inFREE), feaHash[2]));
             op[3] = fr.add(op[3], fr.mul(fr.fromU64(rom.line[l].inFREE), feaHash[3]));
 
-            pols.iHash[i] = fr.one();
+            pols.hash[i] = fr.one();
 
             req[12] = feaHash[0];
             req[13] = feaHash[1];
             req[14] = feaHash[2];
             req[15] = feaHash[3];
-            required.push_back(req);
+            req[16] = fr.fromU64(POSEIDONG_PERMUTATION3_ID);
+            poseidonRequired.push_back(req);
 
 #ifdef LOG_STORAGE_EXECUTOR
-            cout << "StorageExecutor iHash" << rom.line[l].iHashType << " hash=" << fea2string(fr, op) << " value=";
-            for (uint64_t i=0; i<12; i++) cout << fr.toString(auxFea[i],16) << ":";
-            cout << endl;
+            {
+                string s = "StorageExecutor iHash hashType=" + to_string(rom.line[l].hashType) + " hash=" + fea2string(fr, op) + " value=";
+                for (uint64_t i=0; i<12; i++) s += fr.toString(auxFea[i],16) + ":";
+                zklog.info(s);
+            }
+#endif
+        }
+
+        if (rom.line[l].climbBitN) {
+            pols.climbBitN[i] = fr.one();
+#ifdef LOG_STORAGE_EXECUTOR
+            zklog.info("StorageExecutor climbBitN = 1");
 #endif
         }
 
         // Climb the remaining key, by injecting the RKEY_BIT in the register specified by LEVEL
-        if (rom.line[l].iClimbRkey)
+        if (rom.line[l].climbRkey)
         {
-            uint64_t bit = fr.toU64(pols.rkeyBit[i]);
-            if (fr.isOne(pols.level0[i]))
-            {
-                pols.rkey0[nexti] = fr.fromU64((fr.toU64(pols.rkey0[i])<<1) + bit);
-                pols.rkey1[nexti] = pols.rkey1[i];
-                pols.rkey2[nexti] = pols.rkey2[i];
-                pols.rkey3[nexti] = pols.rkey3[i];
+            const int bit = rom.line[l].climbBitN? 1 - fr.toU64(pols.rkeyBit[i]) : fr.toU64(pols.rkeyBit[i]);
+            const int level = fr.toU64(pols.level[i]);
+            const int zlevel = level % 4;
+            Goldilocks::Element rkeys[4] = {pols.rkey0[i], pols.rkey1[i], pols.rkey2[i], pols.rkey3[i]};
+            Goldilocks::Element rkeyClimbed;
+
+            if (!ClimbKeyHelper::calculate(fr, rkeys[zlevel], bit, rkeyClimbed)) {
+                zklog.error("StorageExecutor() ClimbRkey fails because rkey["+to_string(zlevel)+"] has an invalid value ("+fr.toString(rkeys[zlevel])+") before climb with bit="+to_string(bit));
+                exitProcess();
             }
-            if (fr.isOne(pols.level1[i]))
-            {
-                pols.rkey0[nexti] = pols.rkey0[i];
-                pols.rkey1[nexti] = fr.fromU64((fr.toU64(pols.rkey1[i])<<1) + bit);
-                pols.rkey2[nexti] = pols.rkey2[i];
-                pols.rkey3[nexti] = pols.rkey3[i];
+            else if (!fr.equal(rkeyClimbed, op[zlevel])) {
+                zklog.error("StorageExecutor() ClimbRkey fails because rkey["+to_string(zlevel)+"] not match ("+fr.toString(op[zlevel])+" vs "+fr.toString(rkeyClimbed)+") after climb with bit="+to_string(bit));
+                exitProcess();
             }
-            if (fr.isOne(pols.level2[i]))
-            {
-                pols.rkey0[nexti] = pols.rkey0[i];
-                pols.rkey1[nexti] = pols.rkey1[i];
-                pols.rkey2[nexti] = fr.fromU64((fr.toU64(pols.rkey2[i])<<1) + bit);
-                pols.rkey3[nexti] = pols.rkey3[i];
-            }
-            if (fr.isOne(pols.level3[i]))
-            {
-                pols.rkey0[nexti] = pols.rkey0[i];
-                pols.rkey1[nexti] = pols.rkey1[i];
-                pols.rkey2[nexti] = pols.rkey2[i];
-                pols.rkey3[nexti] = fr.fromU64((fr.toU64(pols.rkey3[i])<<1) + bit);
-            }
-            pols.iClimbRkey[i] = fr.one();
+            pols.climbRkey[i] = fr.one();
+
+            ClimbKeyAction climbKeyAction;
+            climbKeyAction.key[0] = rkeys[0];
+            climbKeyAction.key[1] = rkeys[1];
+            climbKeyAction.key[2] = rkeys[2];
+            climbKeyAction.key[3] = rkeys[3];
+            climbKeyAction.level = level;
+            climbKeyAction.bit = bit;
+            climbKeyRequired.push_back(climbKeyAction);
 
 #ifdef LOG_STORAGE_EXECUTOR
-            Goldilocks::Element fea[4] = {pols.rkey0[i], pols.rkey1[i], pols.rkey2[i], pols.rkey3[i]};
-            cout << "StorageExecutor iClimbRkey sibling bit=" << bit << " rkey=" << fea2string(fr,fea) << endl;
+            zklog.info("StorageExecutor iClimbRkey bit=" + to_string(bit) + " rkey=" + fea2string(fr,rkeys)+ " op=" + fea2string(fr, op));
 #endif
         }
 
         // Climb the sibling remaining key, by injecting the sibling bit in the register specified by LEVEL
-        if (rom.line[l].iClimbSiblingRkey)
+        if (rom.line[l].climbSiblingRkey)
         {
-#ifdef LOG_STORAGE_EXECUTOR
-            Goldilocks::Element fea1[4] = {pols.siblingRkey0[i], pols.siblingRkey1[i], pols.siblingRkey2[i], pols.siblingRkey3[i]};
-            cout << "StorageExecutor iClimbSiblingRkey before rkey=" << fea2string(fr,fea1) << endl;
-#endif
-            uint64_t bit = fr.toU64(pols.rkeyBit[i]);
-            if (fr.isOne(pols.level0[i]))
-            {
-                pols.siblingRkey0[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey0[i])<<1) + bit);
-                pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
-                pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
-                pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
+            const int bit = rom.line[l].climbBitN? 1 - fr.toU64(pols.rkeyBit[i]) : fr.toU64(pols.rkeyBit[i]);
+            const int level = fr.toU64(pols.level[i]);
+            const int zlevel = level % 4;
+            Goldilocks::Element rkeys[4] = {pols.siblingRkey0[i], pols.siblingRkey1[i], pols.siblingRkey2[i], pols.siblingRkey3[i]};
+            Goldilocks::Element rkeyClimbed;
+
+            if (!ClimbKeyHelper::calculate(fr, rkeys[zlevel], bit, rkeyClimbed)) {
+                zklog.error("StorageExecutor() climbSiblingRkey fails because siblingRkey["+to_string(zlevel)+"] has an invalid value ("+fr.toString(rkeys[zlevel])+") before climb with bit="+to_string(bit));
+                exitProcess();
             }
-            if (fr.isOne(pols.level1[i]))
-            {
-                pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
-                pols.siblingRkey1[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey1[i])<<1) + bit);
-                pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
-                pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
+            else if (!fr.equal(rkeyClimbed, op[zlevel])) {
+                zklog.error("StorageExecutor() climbSiblingRkey fails because siblingRkey["+to_string(zlevel)+"] not match ("+fr.toString(op[zlevel])+" vs "+fr.toString(rkeyClimbed)+") after climb with bit="+to_string(bit));
+                exitProcess();
             }
-            if (fr.isOne(pols.level2[i]))
-            {
-                pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
-                pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
-                pols.siblingRkey2[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey2[i])<<1) + bit);
-                pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
-            }
-            if (fr.isOne(pols.level3[i]))
-            {
-                pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
-                pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
-                pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
-                pols.siblingRkey3[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey3[i])<<1) + bit);
-            }
-            pols.iClimbSiblingRkey[i] = fr.one();
+            pols.climbSiblingRkey[i] = fr.one();
+
+            ClimbKeyAction climbKeyAction;
+            climbKeyAction.key[0] = rkeys[0];
+            climbKeyAction.key[1] = rkeys[1];
+            climbKeyAction.key[2] = rkeys[2];
+            climbKeyAction.key[3] = rkeys[3];
+            climbKeyAction.level = level;
+            climbKeyAction.bit = bit;
+            climbKeyRequired.push_back(climbKeyAction);
 
 #ifdef LOG_STORAGE_EXECUTOR
-            Goldilocks::Element fea[4] = {pols.siblingRkey0[i], pols.siblingRkey1[i], pols.siblingRkey2[i], pols.siblingRkey3[i]};
-            cout << "StorageExecutor iClimbSiblingRkey after sibling bit=" << bit << " rkey=" << fea2string(fr,fea) << endl;
+            zklog.info("StorageExecutor ClimbSiblingRkey bit=" + to_string(bit) + " rkey=" + fea2string(fr,rkeys)+ " op=" + fea2string(fr, op));
 #endif
         }
-
-        // Climb the sibling remaining key, by injecting the sibling bit in the register specified by LEVEL
-        if (rom.line[l].iClimbSiblingRkeyN)
-        {
-#ifdef LOG_STORAGE_EXECUTOR
-            Goldilocks::Element fea1[4] = {pols.siblingRkey0[i], pols.siblingRkey1[i], pols.siblingRkey2[i], pols.siblingRkey3[i]};
-            cout << "StorageExecutor iClimbSiblingRkeyN before rkey=" << fea2string(fr,fea1) << endl;
-#endif
-            uint64_t bit = 1 - fr.toU64(pols.rkeyBit[i]);
-            if (fr.equal(pols.level0[i], fr.one()))
-            {
-                pols.siblingRkey0[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey0[i])<<1) + bit);
-                pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
-                pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
-                pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
-            }
-            if (fr.equal(pols.level1[i], fr.one()))
-            {
-                pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
-                pols.siblingRkey1[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey1[i])<<1) + bit);
-                pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
-                pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
-            }
-            if (fr.equal(pols.level2[i], fr.one()))
-            {
-                pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
-                pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
-                pols.siblingRkey2[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey2[i])<<1) + bit);
-                pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
-            }
-            if (fr.equal(pols.level3[i], fr.one()))
-            {
-                pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
-                pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
-                pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
-                pols.siblingRkey3[nexti] = fr.fromU64((fr.toU64(pols.siblingRkey3[i])<<1) + bit);
-            }
-            pols.iClimbSiblingRkeyN[i] = fr.one();
-
-#ifdef LOG_STORAGE_EXECUTOR
-            Goldilocks::Element fea[4] = {pols.siblingRkey0[i], pols.siblingRkey1[i], pols.siblingRkey2[i], pols.siblingRkey3[i]};
-            cout << "StorageExecutor iClimbSiblingRkeyN after sibling bit=" << bit << " rkey=" << fea2string(fr,fea) << endl;
-#endif
-        }
-
         // Latch get: at this point consistency is granted: OLD_ROOT, RKEY (complete key), VALUE_LOW, VALUE_HIGH, LEVEL
-        if (rom.line[l].iLatchGet)
-        {            
+        if (rom.line[l].latchGet)
+        {
             // Check that the current action is an SMT get
             if (action[a].bIsSet)
             {
-                cerr << "Error: StorageExecutor() LATCH GET found action " << a << " bIsSet=true" << endl;
+                zklog.error("StorageExecutor() LATCH GET found action " + to_string(a) + " bIsSet=true");
                 exitProcess();
             }
 
@@ -847,7 +879,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                  !fr.equal(pols.oldRoot2[i], action[a].getResult.root[2]) ||
                  !fr.equal(pols.oldRoot3[i], action[a].getResult.root[3]) )
             {
-                cerr << "Error: StorageExecutor() LATCH GET found action " << a << " pols.oldRoot=" << fea2string(fr, pols.oldRoot0[i], pols.oldRoot1[i], pols.oldRoot2[i], pols.oldRoot3[i]) << " different from action.getResult.oldRoot=" << fea2string(fr, action[a].getResult.root[0], action[a].getResult.root[1], action[a].getResult.root[2], action[a].getResult.root[3]) << endl;
+                zklog.error("StorageExecutor() LATCH GET found action " + to_string(a) + " pols.oldRoot=" + fea2string(fr, pols.oldRoot0[i], pols.oldRoot1[i], pols.oldRoot2[i], pols.oldRoot3[i]) + " different from action.getResult.oldRoot=" + fea2string(fr, action[a].getResult.root[0], action[a].getResult.root[1], action[a].getResult.root[2], action[a].getResult.root[3]));
                 exitProcess();
             }
 
@@ -857,18 +889,15 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                  !fr.equal(pols.rkey2[i], action[a].getResult.key[2]) ||
                  !fr.equal(pols.rkey3[i], action[a].getResult.key[3]) )
             {
-                cerr << "Error: StorageExecutor() LATCH GET found action " << a << " pols.rkey!=action.getResult.key" << endl;
-                exitProcess();                
+                zklog.error("StorageExecutor() LATCH GET found action " + to_string(a) + " pols.rkey=" + fea2string(fr, pols.rkey0[i], pols.rkey1[i], pols.rkey2[i], pols.rkey3[i]) + " different from action.getResult.key=" + fea2string(fr, action[a].getResult.key[0], action[a].getResult.key[1], action[a].getResult.key[2], action[a].getResult.key[3]));
+                exitProcess();
             }
 
             // Check that final level state is consistent
-            if ( !fr.isOne(pols.level0[i]) ||
-                 !fr.isZero(pols.level1[i]) ||
-                 !fr.isZero(pols.level2[i]) ||
-                 !fr.isZero(pols.level3[i]) )
+            if ( !fr.isZero(pols.level[i]) )
             {
-                cerr << "Error: StorageExecutor() LATCH GET found action " << a << " wrong level=" << fr.toU64(pols.level3[i]) << ":" << fr.toU64(pols.level2[i]) << ":" << fr.toU64(pols.level1[i]) << ":" << fr.toU64(pols.level0[i]) << endl;
-                exitProcess();                
+                zklog.error("StorageExecutor() LATCH GET found action " + to_string(a) + " wrong level=" + fr.toString(pols.level[i], 10));
+                exitProcess();
             }
 
             // Check that the calculated value key is the same as the provided action value
@@ -885,12 +914,19 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             fea2scalar(fr, valueScalar, valueFea);
             if ( valueScalar != action[a].getResult.value )
             {
-                cerr << "Error: StorageExecutor() LATCH GET found action " << a << " pols.value=" << valueScalar.get_str(16) << " != action.getResult.value=" << action[a].getResult.value.get_str(16) << endl;
-                exitProcess();                
+                zklog.error("StorageExecutor() LATCH GET found action " + to_string(a) + " pols.value=" + valueScalar.get_str(16) + " != action.getResult.value=" + action[a].getResult.value.get_str(16));
+                exitProcess();
             }
 
+            if ( fr.toU64(pols.incCounter[i]) != action[a].getResult.proofHashCounter )
+            {
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " wrong incCounter=" + fr.toString(pols.incCounter[i], 10) + " mode=" + to_string(action[a].getResult.proofHashCounter));
+                exitProcess();
+            }
+
+
 #ifdef LOG_STORAGE_EXECUTOR
-            cout << "StorageExecutor LATCH GET" << endl;
+            zklog.info("StorageExecutor LATCH GET");
 #endif
 
             // Increase action
@@ -902,7 +938,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 actionListEmpty = true;
 
 #ifdef LOG_STORAGE_EXECUTOR
-                cout << "StorageExecutor LATCH GET detected the end of the action list a=" << a << " i=" << i << endl;
+                zklog.info("StorageExecutor LATCH GET detected the end of the action list a=" + to_string(a) + " i=" + to_string(i));
 #endif
             }
             // Initialize the context for the new action
@@ -911,16 +947,16 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 ctx.init(fr, action[a]);
             }
 
-            pols.iLatchGet[i] = fr.one();
+            pols.latchGet[i] = fr.one();
         }
 
         // Latch set: at this point consistency is granted: OLD_ROOT, NEW_ROOT, RKEY (complete key), VALUE_LOW, VALUE_HIGH, LEVEL
-        if (rom.line[l].iLatchSet)
+        if (rom.line[l].latchSet)
         {
             // Check that the current action is an SMT set
             if (!action[a].bIsSet)
             {
-                cerr << "Error: StorageExecutor() LATCH SET found action " << a << " bIsSet=false" << endl;
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " bIsSet=false");
                 exitProcess();
             }
 
@@ -930,7 +966,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                  !fr.equal(pols.oldRoot2[i], action[a].setResult.oldRoot[2]) ||
                  !fr.equal(pols.oldRoot3[i], action[a].setResult.oldRoot[3]) )
             {
-                cerr << "Error: StorageExecutor() LATCH SET found action " << a << " pols.oldRoot=" << fea2string(fr, pols.oldRoot0[i], pols.oldRoot1[i], pols.oldRoot2[i], pols.oldRoot3[i]) << " different from action.setResult.oldRoot=" << fea2string(fr, action[a].setResult.oldRoot[0], action[a].setResult.oldRoot[1], action[a].setResult.oldRoot[2], action[a].setResult.oldRoot[3]) << " mode=" << action[a].setResult.mode << endl;
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " pols.oldRoot=" + fea2string(fr, pols.oldRoot0[i], pols.oldRoot1[i], pols.oldRoot2[i], pols.oldRoot3[i]) + " different from action.setResult.oldRoot=" + fea2string(fr, action[a].setResult.oldRoot[0], action[a].setResult.oldRoot[1], action[a].setResult.oldRoot[2], action[a].setResult.oldRoot[3]) + " mode=" + action[a].setResult.mode);
                 exitProcess();
             }
 
@@ -940,7 +976,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                  !fr.equal(pols.newRoot2[i], action[a].setResult.newRoot[2]) ||
                  !fr.equal(pols.newRoot3[i], action[a].setResult.newRoot[3]) )
             {
-                cerr << "Error: StorageExecutor() LATCH SET found action " << a << " pols.newRoot=" << fea2string(fr, pols.newRoot0[i], pols.newRoot1[i], pols.newRoot2[i], pols.newRoot3[i]) << " different from action.setResult.newRoot=" << fea2string(fr, action[a].setResult.newRoot[0], action[a].setResult.newRoot[1], action[a].setResult.newRoot[2], action[a].setResult.newRoot[3]) << " mode=" << action[a].setResult.mode << endl;
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " pols.newRoot=" + fea2string(fr, pols.newRoot0[i], pols.newRoot1[i], pols.newRoot2[i], pols.newRoot3[i]) + " different from action.setResult.newRoot=" + fea2string(fr, action[a].setResult.newRoot[0], action[a].setResult.newRoot[1], action[a].setResult.newRoot[2], action[a].setResult.newRoot[3]) + " mode=" + action[a].setResult.mode);
                 exitProcess();
             }
 
@@ -950,18 +986,15 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                  !fr.equal(pols.rkey2[i], action[a].setResult.key[2]) ||
                  !fr.equal(pols.rkey3[i], action[a].setResult.key[3]) )
             {
-                cerr << "Error: StorageExecutor() LATCH SET found action " << a << " pols.rkey!=action.setResult.key" << " mode=" << action[a].setResult.mode << endl;
-                exitProcess();                
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " pols.rkey=" + fea2string(fr, pols.rkey0[i], pols.rkey1[i], pols.rkey2[i], pols.rkey3[i]) + " different from action.setResult.key=" + fea2string(fr, action[a].setResult.key[0], action[a].setResult.key[1], action[a].setResult.key[2], action[a].setResult.key[3]) + " mode=" + action[a].setResult.mode);
+                exitProcess();
             }
 
             // Check that final level state is consistent
-            if ( !fr.isOne(pols.level0[i]) ||
-                 !fr.isZero(pols.level1[i]) ||
-                 !fr.isZero(pols.level2[i]) ||
-                 !fr.isZero(pols.level3[i]) )
+            if ( !fr.isZero(pols.level[i]) )
             {
-                cerr << "Error: StorageExecutor() LATCH SET found action " << a << " wrong level=" << fr.toU64(pols.level3[i]) << ":" << fr.toU64(pols.level2[i]) << ":" << fr.toU64(pols.level1[i]) << ":" << fr.toU64(pols.level0[i]) << " mode=" << action[a].setResult.mode << endl;
-                exitProcess();                
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " wrong level=" + fr.toString(pols.level[i], 10) + " mode=" + action[a].setResult.mode);
+                exitProcess();
             }
 
             // Check that the calculated value key is the same as the provided action value
@@ -978,12 +1011,19 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             fea2scalar(fr, valueScalar, valueFea);
             if ( valueScalar != action[a].setResult.newValue )
             {
-                cerr << "Error: StorageExecutor() LATCH SET found action " << a << " pols.value=" << valueScalar.get_str(16) << " != action.setResult.newValue=" << action[a].setResult.newValue.get_str(16) << " mode=" << action[a].setResult.mode << endl;
-                exitProcess();                
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " pols.value=" + valueScalar.get_str(16) + " != action.setResult.newValue=" + action[a].setResult.newValue.get_str(16) + " mode=" + action[a].setResult.mode);
+                exitProcess();
+            }
+
+            // Check that final level state is consistent
+            if ( fr.toU64(pols.incCounter[i]) != action[a].setResult.proofHashCounter )
+            {
+                zklog.error("StorageExecutor() LATCH SET found action " + to_string(a) + " wrong incCounter=" + fr.toString(pols.incCounter[i], 10) + " mode=" + to_string(action[a].setResult.proofHashCounter));
+                exitProcess();
             }
 
 #ifdef LOG_STORAGE_EXECUTOR
-            cout << "StorageExecutor LATCH SET" << endl;
+            zklog.info("StorageExecutor LATCH SET");
 #endif
 
             // Increase action
@@ -995,7 +1035,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 actionListEmpty = true;
 
 #ifdef LOG_STORAGE_EXECUTOR
-                cout << "StorageExecutor() LATCH SET detected the end of the action list a=" << a << " i=" << i << endl;
+                zklog.info("StorageExecutor() LATCH SET detected the end of the action list a=" + to_string(a) + " i=" + to_string(i));
 #endif
             }
             // Initialize the context for the new action
@@ -1004,8 +1044,16 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
                 ctx.init(fr, action[a]);
             }
 
-            pols.iLatchSet[i] = fr.one();
+            pols.latchSet[i] = fr.one();
         }
+
+#ifdef LOG_STORAGE_EXECUTOR_ROM_LINE
+        if (rom.line[l].funcName!="isAlmostEndPolynomial")
+        {
+            printf("[SR%04d I%03d %-28s] OP=[\x1B[35m%s\x1B[0m]\n", (int)l, (int)a, source.c_str(), fea2string(fr, op).c_str());
+        }
+#endif
+
 
         /***********/
         /* Setters */
@@ -1020,7 +1068,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.rkey3[nexti] = op[3];
             pols.setRkey[i] = fr.one();
         }
-        else if (fr.isZero(pols.iClimbRkey[i]))
+        else if (fr.isZero(pols.climbRkey[i]))
         {
             pols.rkey0[nexti] = pols.rkey0[i];
             pols.rkey1[nexti] = pols.rkey1[i];
@@ -1038,7 +1086,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
         {
             pols.rkeyBit[nexti] = pols.rkeyBit[i];
         }
-        
+
         // If setVALUE_LOW then VALUE_LOW=op
         if (rom.line[l].setVALUE_LOW)
         {
@@ -1055,7 +1103,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.valueLow2[nexti] = pols.valueLow2[i];
             pols.valueLow3[nexti] = pols.valueLow3[i];
         }
-        
+
         // If setVALUE_HIGH then VALUE_HIGH=op
         if (rom.line[l].setVALUE_HIGH)
         {
@@ -1072,24 +1120,18 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.valueHigh2[nexti] = pols.valueHigh2[i];
             pols.valueHigh3[nexti] = pols.valueHigh3[i];
         }
-        
+
         // If setLEVEL then LEVEL=op
         if (rom.line[l].setLEVEL)
         {
-            pols.level0[nexti] = op[0];
-            pols.level1[nexti] = op[1];
-            pols.level2[nexti] = op[2];
-            pols.level3[nexti] = op[3];
+            pols.level[nexti] = op[0];
             pols.setLevel[i] = fr.one();
         }
-        else if (fr.isZero(pols.iRotateLevel[i]))
+        else
         {
-            pols.level0[nexti] = pols.level0[i];
-            pols.level1[nexti] = pols.level1[i];
-            pols.level2[nexti] = pols.level2[i];
-            pols.level3[nexti] = pols.level3[i];
+            pols.level[nexti] = pols.level[i];
         }
-        
+
         // If setOLD_ROOT then OLD_ROOT=op
         if (rom.line[l].setOLD_ROOT)
         {
@@ -1106,7 +1148,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.oldRoot2[nexti] = pols.oldRoot2[i];
             pols.oldRoot3[nexti] = pols.oldRoot3[i];
         }
-        
+
         // If setNEW_ROOT then NEW_ROOT=op
         if (rom.line[l].setNEW_ROOT)
         {
@@ -1123,7 +1165,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.newRoot2[nexti] = pols.newRoot2[i];
             pols.newRoot3[nexti] = pols.newRoot3[i];
         }
-        
+
         // If setHASH_LEFT then HASH_LEFT=op
         if (rom.line[l].setHASH_LEFT)
         {
@@ -1140,7 +1182,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.hashLeft2[nexti] = pols.hashLeft2[i];
             pols.hashLeft3[nexti] = pols.hashLeft3[i];
         }
-        
+
         // If setHASH_RIGHT then HASH_RIGHT=op
         if (rom.line[l].setHASH_RIGHT)
         {
@@ -1157,7 +1199,7 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.hashRight2[nexti] = pols.hashRight2[i];
             pols.hashRight3[nexti] = pols.hashRight3[i];
         }
-        
+
         // If setSIBLING_RKEY then SIBLING_RKEY=op
         if (rom.line[l].setSIBLING_RKEY)
         {
@@ -1167,14 +1209,14 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
             pols.siblingRkey3[nexti] = op[3];
             pols.setSiblingRkey[i] = fr.one();
         }
-        else if ( fr.isZero(pols.iClimbSiblingRkey[i]) && fr.isZero(pols.iClimbSiblingRkeyN[i]) )
+        else
         {
             pols.siblingRkey0[nexti] = pols.siblingRkey0[i];
             pols.siblingRkey1[nexti] = pols.siblingRkey1[i];
             pols.siblingRkey2[nexti] = pols.siblingRkey2[i];
             pols.siblingRkey3[nexti] = pols.siblingRkey3[i];
         }
-        
+
         // If setSIBLING_VALUE_HASH then SIBLING_VALUE_HASH=op
         if (rom.line[l].setSIBLING_VALUE_HASH)
         {
@@ -1195,15 +1237,15 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
         // Calculate op0 inverse
         if (!fr.isZero(op[0]))
         {
-            pols.op0inv[i] = fr.inv(op[0]);
+            pols.op0inv[i] = glp.inv(op[0]);
         }
 
         // Increment counter at every hash, and reset it at every latch
-        if (rom.line[l].iHash)
+        if (rom.line[l].hash)
         {
             pols.incCounter[nexti] = fr.add(pols.incCounter[i], fr.one());
         }
-        else if (rom.line[l].iLatchGet || rom.line[l].iLatchSet)
+        else if (rom.line[l].latchGet || rom.line[l].latchSet)
         {
             pols.incCounter[nexti] = fr.zero();
         }
@@ -1213,19 +1255,32 @@ void StorageExecutor::execute (vector<SmtAction> &action, StorageCommitPols &pol
         }
 
 #ifdef LOG_STORAGE_EXECUTOR
-        if ((i%1000) == 0) cout << "StorageExecutor step " << i << " done" << endl;
+        if ((i%1000) == 0) zklog.info("StorageExecutor step " + to_string(i) + " done");
 #endif
     }
 
-    cout << "StorageExecutor successfully processed " << action.size() << " SMT actions" << endl;
+    // Check that ROM has done all its work
+    if (lastStep == 0)
+    {
+        zklog.error("StorageExecutor::execute() finished execution but ROM did not call isAlmostEndPolynomial");
+        exitProcess();
+    }
+
+    zklog.info("StorageExecutor successfully processed " + to_string(action.size()) + " SMT actions (" + to_string((double(lastStep)*100)/N) + "%)");
 }
 
 // To be used only for testing, since it allocates a lot of memory
 void StorageExecutor::execute (vector<SmtAction> &action)
 {
-    void * pAddress = mapFile(config.cmPolsFile, CommitPols::pilSize(), true);
+    void * pAddress = malloc(CommitPols::pilSize());
+    if (pAddress == NULL)
+    {
+        zklog.error("StorageExecutor::execute() failed calling malloc() of size=" + to_string(CommitPols::pilSize()));
+        exitProcess();
+    }
     CommitPols cmPols(pAddress, CommitPols::pilDegree());
-    vector<array<Goldilocks::Element, 16>> required;
-    execute(action, cmPols.Storage, required);
-    unmapFile(pAddress, CommitPols::pilSize());
+    vector<array<Goldilocks::Element, 17>> poseidonRequired;
+    vector<ClimbKeyAction> climbKeyRequired;
+    execute(action, cmPols.Storage, poseidonRequired, climbKeyRequired);
+    free(pAddress);
 }

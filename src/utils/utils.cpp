@@ -1,6 +1,7 @@
 #include <fstream>
 #include <iostream>
 #include <iomanip>
+#include <filesystem>
 #include <uuid/uuid.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -14,151 +15,34 @@
 #include <openssl/evp.h>
 #include <openssl/sha.h>
 #include <openssl/crypto.h>
+#include <ifaddrs.h>
+#include <net/if.h>
+#include <arpa/inet.h>
+#include "zklog.hpp"
 
 using namespace std;
-
-void printRegs(Context &ctx)
-{
-    cout << "Registers:" << endl;
-    printReg(ctx, "A7", ctx.pols.A7[*ctx.pStep]);
-    printReg(ctx, "A6", ctx.pols.A6[*ctx.pStep]);
-    printReg(ctx, "A5", ctx.pols.A5[*ctx.pStep]);
-    printReg(ctx, "A4", ctx.pols.A4[*ctx.pStep]);
-    printReg(ctx, "A3", ctx.pols.A3[*ctx.pStep]);
-    printReg(ctx, "A2", ctx.pols.A2[*ctx.pStep]);
-    printReg(ctx, "A1", ctx.pols.A1[*ctx.pStep]);
-    printReg(ctx, "A0", ctx.pols.A0[*ctx.pStep]);
-    printReg(ctx, "B7", ctx.pols.B7[*ctx.pStep]);
-    printReg(ctx, "B6", ctx.pols.B6[*ctx.pStep]);
-    printReg(ctx, "B5", ctx.pols.B5[*ctx.pStep]);
-    printReg(ctx, "B4", ctx.pols.B4[*ctx.pStep]);
-    printReg(ctx, "B3", ctx.pols.B3[*ctx.pStep]);
-    printReg(ctx, "B2", ctx.pols.B2[*ctx.pStep]);
-    printReg(ctx, "B1", ctx.pols.B1[*ctx.pStep]);
-    printReg(ctx, "B0", ctx.pols.B0[*ctx.pStep]);
-    printReg(ctx, "C7", ctx.pols.C7[*ctx.pStep]);
-    printReg(ctx, "C6", ctx.pols.C6[*ctx.pStep]);
-    printReg(ctx, "C5", ctx.pols.C5[*ctx.pStep]);
-    printReg(ctx, "C4", ctx.pols.C4[*ctx.pStep]);
-    printReg(ctx, "C3", ctx.pols.C3[*ctx.pStep]);
-    printReg(ctx, "C2", ctx.pols.C2[*ctx.pStep]);
-    printReg(ctx, "C1", ctx.pols.C1[*ctx.pStep]);
-    printReg(ctx, "C0", ctx.pols.C0[*ctx.pStep]);
-    printReg(ctx, "D7", ctx.pols.D7[*ctx.pStep]);
-    printReg(ctx, "D6", ctx.pols.D6[*ctx.pStep]);
-    printReg(ctx, "D5", ctx.pols.D5[*ctx.pStep]);
-    printReg(ctx, "D4", ctx.pols.D4[*ctx.pStep]);
-    printReg(ctx, "D3", ctx.pols.D3[*ctx.pStep]);
-    printReg(ctx, "D2", ctx.pols.D2[*ctx.pStep]);
-    printReg(ctx, "D1", ctx.pols.D1[*ctx.pStep]);
-    printReg(ctx, "D0", ctx.pols.D0[*ctx.pStep]);
-    printReg(ctx, "E7", ctx.pols.E7[*ctx.pStep]);
-    printReg(ctx, "E6", ctx.pols.E6[*ctx.pStep]);
-    printReg(ctx, "E5", ctx.pols.E5[*ctx.pStep]);
-    printReg(ctx, "E4", ctx.pols.E4[*ctx.pStep]);
-    printReg(ctx, "E3", ctx.pols.E3[*ctx.pStep]);
-    printReg(ctx, "E2", ctx.pols.E2[*ctx.pStep]);
-    printReg(ctx, "E1", ctx.pols.E1[*ctx.pStep]);
-    printReg(ctx, "E0", ctx.pols.E0[*ctx.pStep]);
-    printReg(ctx, "SR7", ctx.pols.SR7[*ctx.pStep]);
-    printReg(ctx, "SR6", ctx.pols.SR6[*ctx.pStep]);
-    printReg(ctx, "SR5", ctx.pols.SR5[*ctx.pStep]);
-    printReg(ctx, "SR4", ctx.pols.SR4[*ctx.pStep]);
-    printReg(ctx, "SR3", ctx.pols.SR3[*ctx.pStep]);
-    printReg(ctx, "SR2", ctx.pols.SR2[*ctx.pStep]);
-    printReg(ctx, "SR1", ctx.pols.SR1[*ctx.pStep]);
-    printReg(ctx, "SR0", ctx.pols.SR0[*ctx.pStep]);
-    printReg(ctx, "CTX", ctx.pols.CTX[*ctx.pStep]);
-    printReg(ctx, "SP", ctx.pols.SP[*ctx.pStep]);
-    printReg(ctx, "PC", ctx.pols.PC[*ctx.pStep]);
-    printReg(ctx, "MAXMEM", ctx.pols.MAXMEM[*ctx.pStep]);
-    printReg(ctx, "GAS", ctx.pols.GAS[*ctx.pStep]);
-    printReg(ctx, "zkPC", ctx.pols.zkPC[*ctx.pStep]);
-    Goldilocks::Element step;
-    step = ctx.fr.fromU64(*ctx.pStep);
-    printReg(ctx, "STEP", step, false, true);
-#ifdef LOG_FILENAME
-    cout << "File: " << ctx.fileName << " Line: " << ctx.line << endl;
-#endif
-}
-
-void printVars(Context &ctx)
-{
-    cout << "Variables:" << endl;
-    uint64_t i = 0;
-    for (map<string, mpz_class>::iterator it = ctx.vars.begin(); it != ctx.vars.end(); it++)
-    {
-        cout << "i: " << i << " varName: " << it->first << " fe: " << it->second.get_str(16) << endl;
-        i++;
-    }
-}
-
-string printFea(Context &ctx, Fea &fea)
-{
-    return ctx.fr.toString(fea.fe7, 16) +
-           ":" + ctx.fr.toString(fea.fe6, 16) +
-           ":" + ctx.fr.toString(fea.fe5, 16) +
-           ":" + ctx.fr.toString(fea.fe4, 16) +
-           ":" + ctx.fr.toString(fea.fe3, 16) +
-           ":" + ctx.fr.toString(fea.fe2, 16) +
-           ":" + ctx.fr.toString(fea.fe1, 16) +
-           ":" + ctx.fr.toString(fea.fe0, 16);
-}
-
-void printMem(Context &ctx)
-{
-    cout << "Memory:" << endl;
-    uint64_t i = 0;
-    for (map<uint64_t, Fea>::iterator it = ctx.mem.begin(); it != ctx.mem.end(); it++)
-    {
-        mpz_class addr(it->first);
-        cout << "i: " << i << " address:" << addr.get_str(16) << " ";
-        cout << printFea(ctx, it->second);
-        cout << endl;
-        i++;
-    }
-}
-
-void printReg(Context &ctx, string name, Goldilocks::Element &fe, bool h, bool bShort)
-{
-    cout << "    Register: " << name << " Value: " << ctx.fr.toString(fe, 16) << endl;
-}
-
-void printU64(Context &ctx, string name, uint64_t v)
-{
-    cout << "    U64: " << name << ":" << v << endl;
-}
-
-void printU32(Context &ctx, string name, uint32_t v)
-{
-    cout << "    U32: " << name << ":" << v << endl;
-}
-
-void printU16(Context &ctx, string name, uint16_t v)
-{
-    cout << "    U16: " << name << ":" << v << endl;
-}
+using namespace std::filesystem;
 
 void printBa(uint8_t *pData, uint64_t dataSize, string name)
 {
-    cout << name << " = ";
+    string s = name + " = ";
     for (uint64_t k = 0; k < dataSize; k++)
     {
-        cout << byte2string(pData[k]) << ":";
+        s += byte2string(pData[k]) + ":";
     }
-    cout << endl;
+    zklog.info(s);
 }
 
 void printBits(uint8_t *pData, uint64_t dataSize, string name)
 {
-    cout << name << " = ";
+    string s = name + " = ";
     for (uint64_t k = 0; k < dataSize / 8; k++)
     {
         uint8_t byte;
         bits2byte(pData + k * 8, byte);
-        cout << byte2string(byte) << ":";
+        s += byte2string(byte) + ":";
     }
-    cout << endl;
+    zklog.info(s);
 }
 
 void printCallStack(void)
@@ -166,27 +50,24 @@ void printCallStack(void)
     void *callStack[100];
     size_t callStackSize = backtrace(callStack, 100);
     char **callStackSymbols = backtrace_symbols(callStack, callStackSize);
-    cout << "CALL STACK" << endl;
+    zklog.info("CALL STACK");
     for (uint64_t i = 0; i < callStackSize; i++)
     {
-        cout << i << ": call=" << callStackSymbols[i] << endl;
+        zklog.info(to_string(i) + ": call=" + callStackSymbols[i]);
     }
-    cout << endl;
     free(callStackSymbols);
 }
 
-void printMemoryInfo()
+void getMemoryInfo(MemoryInfo &info)
 {
-    cout << "MEMORY INFO" << endl;
-
     vector<string> labels{"MemTotal:", "MemFree:", "MemAvailable:", "Buffers:", "Cached:", "SwapCached:", "SwapTotal:", "SwapFree:"};
-    constexpr double factorMB = 1024;
 
     ifstream meminfo = ifstream{"/proc/meminfo"};
     if (!meminfo.good())
     {
-        cout << "Failed to get memory info" << endl;
+        zklog.error("Failed to get memory info");
     }
+
     string line, label;
     uint64_t value;
     while (getline(meminfo, line))
@@ -195,22 +76,71 @@ void printMemoryInfo()
         ss >> label >> value;
         if (find(labels.begin(), labels.end(), label) != labels.end())
         {
-            cout << left << setw(15) << label << right << setw(15) << (value / factorMB) << " MB" << endl;
+            if (label == "MemTotal:") info.total = value;
+            else if (label == "MemFree:") info.free = value;
+            else if (label == "MemAvailable:") info.available = value;
+            else if (label == "Buffers:") info.buffers = value;
+            else if (label == "Cached:") info.cached = value;
+            else if (label == "SwapCached:") info.swapCached = value;
+            else if (label == "SwapTotal:") info.swapTotal = value;
+            else if (label == "SwapFree:") info.swapFree = value;
         }
     }
     meminfo.close();
-
-    cout << endl;
 }
 
-void printProcessInfo()
+void parseProcSelfStat (double &vm, double &rss)
 {
-    cout << "PROCESS INFO" << endl;
+    string aux;
+    ifstream ifs("/proc/self/stat", ios_base::in);
+    ifs >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> aux >> vm >> rss;
+}
+
+void printMemoryInfo(bool compact, const char * pMessage)
+{
+    string s;
+
+    string endLine = (compact ? ", " : "\n");
+    string tab = (compact ? "" : "    ");
+
+    s = "MEMORY INFO " + (pMessage==NULL?"":string(pMessage)) + endLine;
+
+    constexpr double factorMB = 1024;
+
+    MemoryInfo info;
+    getMemoryInfo(info);
+
+    double vm, rss;
+    parseProcSelfStat(vm, rss);
+    vm /= 1024*1024;
+    rss /= 1024*1024;
+
+    s += tab + "MemTotal: "+ to_string(info.total / factorMB) + " MB" + endLine;
+    s += tab + "MemFree: " + to_string(info.free / factorMB) + " MB" + endLine;
+    s += tab + "MemAvailable: " + to_string(info.available / factorMB) + " MB" + endLine;
+    s += tab + "Buffers: " + to_string(info.buffers / factorMB) + " MB" + endLine;
+    s += tab + "Cached: " + to_string(info.cached / factorMB) + " MB" + endLine;
+    s += tab + "SwapCached: " + to_string(info.swapCached / factorMB) + " MB" + endLine;
+    s += tab + "SwapTotal: " + to_string(info.swapTotal / factorMB) + " MB" + endLine;
+    s += tab + "SwapFree: " + to_string(info.swapFree / factorMB) + " MB" + endLine;
+    s += tab + "VM: " + to_string(vm) + " MB" + endLine;
+    s += tab + "RSS: " + to_string(rss) + " MB";
+
+    zklog.info(s);
+}
+
+void printProcessInfo(bool compact)
+{
+    string endLine = (compact ? ", " : "\n");
+    string tab = (compact ? "" : "    ");
+
+    string s = "PROCESS INFO" + endLine;
 
     ifstream stat("/proc/self/stat", ios_base::in);
     if (!stat.good())
     {
-        cout << "Failed to get process stat info" << endl;
+        zklog.error("printProcessInfo() failed to get process stat info");
+        return;
     }
 
     string comm, state, ppid, pgrp, session, tty_nr;
@@ -226,21 +156,14 @@ void printProcessInfo()
 
     stat.close();
 
-    cout << left << setw(15) << "Pid: " << right << setw(15) << pid << endl;
-    cout << left << setw(15) << "User time: " << right << setw(15) << (double)utime / sysconf(_SC_CLK_TCK) << " s" << endl;
-    cout << left << setw(15) << "Kernel time: " << right << setw(15) << (double)stime / sysconf(_SC_CLK_TCK) << " s" << endl;
-    cout << left << setw(15) << "Total time: " << right << setw(15) << (double)utime / sysconf(_SC_CLK_TCK) + (double)stime / sysconf(_SC_CLK_TCK) << " s" << endl;
-    cout << left << setw(15) << "Num threads: " << right << setw(15) << numthreads << endl;
-    cout << left << setw(15) << "Virtual mem: " << right << setw(15) << vsize / 1024 / 1024 << " MB" << endl;
-    cout << endl;
-}
+    s += tab + "Pid: " + to_string(pid) + endLine;
+    s += tab + "User time: " + to_string((double)utime / sysconf(_SC_CLK_TCK)) + " s" + endLine;
+    s += tab + "Kernel time: " + to_string((double)stime / sysconf(_SC_CLK_TCK)) + " s" + endLine;
+    s += tab + "Total time: " + to_string((double)utime / sysconf(_SC_CLK_TCK) + (double)stime / sysconf(_SC_CLK_TCK)) + " s" + endLine;
+    s += tab + "Num threads: " + to_string(numthreads) + endLine;
+    s += tab + "Virtual mem: " + to_string(vsize / 1024 / 1024) + " MB";
 
-void exitProcess(void)
-{
-    printCallStack();
-    printMemoryInfo();
-    printProcessInfo();
-    exit(-1);
+    zklog.info(s);
 }
 
 string getTimestamp(void)
@@ -251,6 +174,30 @@ string getTimestamp(void)
     strftime(tmbuf, sizeof(tmbuf), "%Y%m%d_%H%M%S", gmtime(&tv.tv_sec));
     snprintf(buf, sizeof(buf), "%s_%06ld", tmbuf, tv.tv_usec);
     return buf;
+}
+
+string getTimestampWithPeriod(void)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    char buf[256];
+    snprintf(buf, sizeof(buf), "%ld.%06ld", tv.tv_sec, tv.tv_usec);
+    return buf;
+}
+
+void getTimestampWithSlashes(string &timestamp, string &folder, string &file)
+{
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    char tmbuf[64], buf[256];
+    strftime(tmbuf, sizeof(tmbuf), "%Y%m%d_%H%M%S", gmtime(&tv.tv_sec));
+    snprintf(buf, sizeof(buf), "%s_%06ld", tmbuf, tv.tv_usec);
+    timestamp = buf;
+    strftime(tmbuf, sizeof(tmbuf), "%Y/%m/%d/%H", gmtime(&tv.tv_sec));
+    folder = tmbuf;
+    strftime(tmbuf, sizeof(tmbuf), "%M%S", gmtime(&tv.tv_sec));
+    snprintf(buf, sizeof(buf), "%s_%06ld", tmbuf, tv.tv_usec);
+    file = buf;
 }
 
 string getUUID(void)
@@ -267,7 +214,7 @@ void json2file(const json &j, const string &fileName)
     ofstream outputStream(fileName);
     if (!outputStream.good())
     {
-        cerr << "Error: json2file() failed creating output JSON file " << fileName << endl;
+        zklog.error("json2file() failed creating output JSON file " + fileName);
         exitProcess();
     }
     outputStream << setw(4) << j << endl;
@@ -276,14 +223,104 @@ void json2file(const json &j, const string &fileName)
 
 void file2json(const string &fileName, json &j)
 {
+    zklog.info("file2json() loading JSON file " + fileName);
     std::ifstream inputStream(fileName);
     if (!inputStream.good())
     {
-        cerr << "Error: file2json() failed loading input JSON file " << fileName << endl;
+        zklog.error("file2json() failed loading input JSON file " + fileName + "; does this file exist?");
         exitProcess();
     }
-    inputStream >> j;
+    try
+    {
+        inputStream >> j;
+    }
+    catch (exception &e)
+    {
+        zklog.error("file2json() failed parsing input JSON file " + fileName + " exception=" + e.what());
+        exitProcess();
+    }
     inputStream.close();
+}
+
+void file2json(const string &fileName, ordered_json &j)
+{
+    zklog.info("file2json() (ordered) loading JSON file " + fileName);
+    std::ifstream inputStream(fileName);
+    if (!inputStream.good())
+    {
+        zklog.error("file2json() failed loading input JSON file " + fileName);
+        exitProcess();
+    }
+    try
+    {
+        inputStream >> j;
+    }
+    catch (exception &e)
+    {
+        zklog.error("file2json() failed parsing input JSON file " + fileName + " exception=" + e.what());
+        exitProcess();
+    }
+    inputStream.close();
+}
+
+bool fileExists (const string &fileName)
+{
+    struct stat fileStat;
+    int iResult = stat( fileName.c_str(), &fileStat);
+    return (iResult == 0);
+}
+
+uint64_t fileSize (const string &fileName)
+{
+    struct stat fileStat;
+    int iResult = stat( fileName.c_str(), &fileStat);
+    if (iResult != 0)
+    {
+        zklog.error("fileSize() could not find file " + fileName);
+        exitProcess();
+    }
+    return fileStat.st_size;
+}
+
+bool fileIsDirectory (const string &fileName)
+{
+    struct stat fileStat;
+    int iResult = stat( fileName.c_str(), &fileStat);
+    if (iResult != 0)
+    {
+        return false;
+    }
+    if ((fileStat.st_mode & S_IFMT) == S_IFDIR)
+    {
+        return true;
+    }
+    return false;
+}
+
+void ensureDirectoryExists (const string &fileName)
+{
+    string command = "[ -d " + fileName + " ] || mkdir -p " + fileName;
+    int iResult = system(command.c_str());
+    if (iResult != 0)
+    {
+        zklog.error("ensureDirectoryExists() system() returned: " + to_string(iResult));
+        exitProcess();
+    }
+}
+
+uint64_t getNumberOfFileDescriptors (void)
+{
+    auto iterator = std::filesystem::directory_iterator("/proc/self/fd");
+    uint64_t result = 0;
+    for (auto& i : iterator)
+    {
+        if (i.exists())
+        {
+            result++;
+        }
+        //zklog.info("getNumberOfFileDescriptors() i=" + to_string(i) + " file=" + i.path());
+    }
+    return result;
 }
 
 void *mapFileInternal(const string &fileName, uint64_t size, bool bOutput, bool bMapInputFile)
@@ -294,12 +331,12 @@ void *mapFileInternal(const string &fileName, uint64_t size, bool bOutput, bool 
         struct stat sb;
         if (lstat(fileName.c_str(), &sb) == -1)
         {
-            cerr << "Error: mapFile() failed calling lstat() of file " << fileName << endl;
+            zklog.error("mapFile() failed calling lstat() of file " + fileName);
             exitProcess();
         }
         if ((uint64_t)sb.st_size != size)
         {
-            cerr << "Error: mapFile() found size of file " << fileName << " to be " << sb.st_size << " B instead of " << size << " B" << endl;
+            zklog.error("mapFile() found size of file " + fileName + " to be " + to_string(sb.st_size) + " B instead of " + to_string(size) + " B");
             exitProcess();
         }
     }
@@ -309,11 +346,11 @@ void *mapFileInternal(const string &fileName, uint64_t size, bool bOutput, bool 
     if (bOutput)
         oflags = O_CREAT | O_RDWR | O_TRUNC;
     else
-        oflags = O_RDWR;
+        oflags = O_RDONLY;
     int fd = open(fileName.c_str(), oflags, 0666);
     if (fd < 0)
     {
-        cerr << "Error: mapFile() failed opening file: " << fileName << endl;
+        zklog.error("mapFile() failed opening file: " + fileName);
         exitProcess();
     }
 
@@ -324,7 +361,7 @@ void *mapFileInternal(const string &fileName, uint64_t size, bool bOutput, bool 
         int result = lseek(fd, size - 1, SEEK_SET);
         if (result == -1)
         {
-            cerr << "Error: mapFile() failed calling lseek() of file: " << fileName << endl;
+            zklog.error("mapFile() failed calling lseek() of file: " + fileName);
             exitProcess();
         }
 
@@ -332,17 +369,17 @@ void *mapFileInternal(const string &fileName, uint64_t size, bool bOutput, bool 
         result = write(fd, "", 1);
         if (result < 0)
         {
-            cerr << "Error: mapFile() failed calling write() of file: " << fileName << endl;
+            zklog.error("mapFile() failed calling write() of file: " + fileName);
             exitProcess();
         }
     }
 
     // Map the file into memory
     void *pAddress;
-    pAddress = (uint8_t *)mmap(NULL, size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    pAddress = (uint8_t *)mmap(NULL, size, bOutput ? (PROT_READ | PROT_WRITE) : PROT_READ, MAP_SHARED, fd, 0);
     if (pAddress == MAP_FAILED)
     {
-        cerr << "Error: mapFile() failed calling mmap() of file: " << fileName << endl;
+        zklog.error("mapFile() failed calling mmap() of file: " + fileName);
         exitProcess();
     }
     close(fd);
@@ -355,7 +392,7 @@ void *mapFileInternal(const string &fileName, uint64_t size, bool bOutput, bool 
     void *pMemAddress = malloc(size);
     if (pMemAddress == NULL)
     {
-        cerr << "Error: mapFile() failed calling malloc() of size: " << size << endl;
+        zklog.error("mapFile() failed calling malloc() of size: " + to_string(size));
         exitProcess();
     }
 
@@ -383,7 +420,7 @@ void unmapFile(void *pAddress, uint64_t size)
     int err = munmap(pAddress, size);
     if (err != 0)
     {
-        cerr << "Error: unmapFile() failed calling munmap() of address=" << pAddress << " size=" << size << endl;
+        zklog.error("unmapFile() failed calling munmap() of address=" + to_string(uint64_t(pAddress)) + " size=" + to_string(size));
         exitProcess();
     }
 }
@@ -406,4 +443,270 @@ string sha256(string str)
     for (i = 0; i < SHA256_DIGEST_LENGTH; i++)
         sprintf(&mdString[i * 2], "%02x", (unsigned int)md[i]);
     return mdString;
+}
+
+vector<string> getFolderFiles (string folder, bool sorted)
+{
+    vector<string> vfiles;
+    
+    for (directory_entry p: directory_iterator(folder))
+    {
+        vfiles.push_back(p.path().filename());
+    }
+    
+    // Sort files alphabetically
+    if (sorted) sort(vfiles.begin(),vfiles.end());    
+
+    return vfiles;
+}
+
+uint64_t getNumberOfCores (void)
+{
+    return omp_get_num_procs();
+}
+
+void string2file (const string & s, const string & fileName)
+{
+    std::ofstream outfile;
+    outfile.open(fileName);
+    outfile << s << endl;
+    outfile.close();
+}
+
+void file2string (const string &fileName, string &s)
+{
+    std::ifstream infile;
+    infile.open(fileName);
+    std::stringstream ss;
+    ss << infile.rdbuf();
+    s = ss.str();
+    infile.close();
+}
+
+/*
+// Convert an octal string into an hex string
+bool octal2hex (const string &octalString, string &hexString)
+{
+    hexString.clear();
+
+    uint64_t octalStringSize = octalString.size();
+    for (uint64_t i=0; i<octalStringSize; i++)
+    {
+        char c = octalString[i];
+        if (c != '\\')
+        {
+            hexString += byte2string(c);
+            continue;
+        }
+        if (octalStringSize - i < 3)
+        {
+            zklog.error("octal2hex() found an invalid octal sequence at position i=" + to_string(i) + " rest=" + octalString.substr(i));
+            return false;
+        }
+        i++;
+        c = char2byte(octalString[i]);
+        c = c << 3;
+        i++;
+        c += char2byte(octalString[i]);
+        c = c << 3;
+        i++;
+        c += char2byte(octalString[i]);
+    }
+    return true;
+}
+
+// Convert a text with "octal_strings" in quotes, to a text with "hex_strings" in quotes
+bool octalText2hexText (const string &octalText, string &hexText)
+{
+    hexText.clear();
+
+    size_t currentPosition = 0;
+    size_t stringBegin;
+    size_t stringEnd;
+
+    do
+    {
+        stringBegin = octalText.find('"', currentPosition);
+        if (stringBegin == string::npos)
+        {
+            hexText = octalText.substr(currentPosition);
+            break;
+        }
+        stringEnd = octalText.find('"', stringBegin + 1);
+        if (stringEnd == string::npos)
+        {
+            zklog.error("octalText2hexText() could not find the ending \"");
+            hexText = octalText; // Copy it as it is
+            return false;
+        }
+        hexText += octalText.substr(currentPosition, stringBegin+1);
+        string aux;
+        octal2hex(octalText.substr(stringBegin+1, stringEnd), aux);
+        hexText += aux;
+        hexText += "\"";
+        currentPosition = stringEnd + 1;
+    } while (true);
+    return true;
+}
+*/
+
+// Get IP address
+void getIPAddress (string &ipAddress)
+{
+    ipAddress.clear();
+
+    struct ifaddrs* pIfaddrs = NULL;
+
+    int iResult = getifaddrs(&pIfaddrs);
+    if (iResult != 0)
+    {
+        zklog.error("getNetworkInfo() failed calling getifaddrs() iResult=" + to_string(iResult) + "=" + strerror(iResult));
+        return;
+    }
+
+    for ( struct ifaddrs* pEntry = pIfaddrs; pEntry != NULL; pEntry = pEntry->ifa_next)
+    {
+        // Skip localhost
+        std::string name = std::string(pEntry->ifa_name);
+        if (name == "lo")
+        {
+            continue;
+        }
+
+        if (pEntry->ifa_addr != NULL)
+        {
+            sa_family_t address_family = pEntry->ifa_addr->sa_family;
+            if (address_family == AF_INET) 
+            {
+                char buffer[INET_ADDRSTRLEN] = {0};
+                inet_ntop(address_family, &((struct sockaddr_in*)(pEntry->ifa_addr))->sin_addr, buffer, INET_ADDRSTRLEN);
+                if (ipAddress != "")
+                {
+                    ipAddress += ",";
+                }
+                ipAddress += buffer;    // Code for IPv4 address handling
+            }
+            /*else if (address_family == AF_INET6) 
+            {
+                if ( pEntry->ifa_addr != nullptr )
+                {
+                    char buffer[INET6_ADDRSTRLEN] = {0};
+                    inet_ntop(address_family, &((struct sockaddr_in6*)(pEntry->ifa_addr))->sin6_addr, buffer, INET6_ADDRSTRLEN);
+                    ipAddress += buffer;
+                    ipAddress += " ";
+                }
+            }*/
+        }
+    }
+
+    freeifaddrs(pIfaddrs);
+}
+
+void getStringIncrement(const string &oldString, const string &newString, uint64_t &offset, uint64_t &length)
+{
+    // If new string is shorter, return it all
+    if (oldString.size() > newString.size())
+    {
+        offset = 0;
+        length = newString.size();
+        return;
+    }
+    
+    // Find first different char, and assign it to offset
+    int64_t i = 0;
+    for (; i < (int64_t)oldString.size(); i++)
+    {
+        if (oldString[i] != newString[i])
+        {
+            break;
+        }
+    }
+    if (i == (int64_t)oldString.size())
+    {
+        if (oldString.size() == newString.size()) // Identical strings
+        {
+            offset = 0;
+            length = 0;
+            return;
+        }
+        for (; i < (int64_t)newString.size(); i++)
+        {
+            if (newString[i] != 0)
+            {
+                break;
+            }
+        }
+        if (i == (int64_t)newString.size()) // new string is all zeros
+        {
+            offset = 0;
+            length = 0;
+            return;
+        }
+    }
+    offset = i;
+
+    // If new string is longer, find last non-zero byte, if any
+    if (newString.size() > oldString.size())
+    {
+        for (i = (int64_t)newString.size()-1; i >= (int64_t)oldString.size(); i--)
+        {
+            if (newString[i] != 0)
+            {
+                length = i + 1 - offset;
+                return;
+            }
+        }     
+    }
+
+
+    // Find last different char, and calculate length
+    for (i = (int64_t)oldString.size() - 1; i >= 0; i--)
+    {
+        if (oldString[i] != newString[i])
+        {
+            length = i + 1 - offset;
+            return;
+        }
+    }
+
+    length = 0;
+}
+
+string emptyString;
+
+void poseidonLinearHash (const vector<uint8_t> &_data, Goldilocks::Element (&result)[4])
+{
+    // Get a local copy of the bytes vector
+    vector<uint8_t> data = _data;
+
+    // Add padding = 0b1000...00001  up to a length of 56xN (7x8xN)
+    data.push_back(0x01);
+    while((data.size() % 56) != 0) data.push_back(0);
+    data[data.size()-1] |= 0x80;
+
+    // Create a FE buffer to store the transformed bytes into fe
+    uint64_t bufferSize = data.size()/7;
+    Goldilocks::Element * pBuffer = new Goldilocks::Element[bufferSize];
+    if (pBuffer == NULL)
+    {
+        zklog.error("poseidonLinearHash() failed allocating memory of " + to_string(bufferSize) + " field elements");
+        exitProcess();
+    }
+
+    // Init to zero
+    for (uint64_t j=0; j<bufferSize; j++) pBuffer[j] = fr.zero();
+
+    // Copy the bytes into the fe lower 7 sections
+    for (uint64_t j=0; j<data.size(); j++)
+    {
+        uint64_t fePos = j/7;
+        uint64_t shifted = uint64_t(data[j]) << ((j%7)*8);
+        pBuffer[fePos] = fr.add(pBuffer[fePos], fr.fromU64(shifted));
+    }
+
+    // Call poseidon linear hash
+    poseidon.linear_hash(result, pBuffer, bufferSize);
+
+    // Free allocated memory
+    delete[] pBuffer;
 }

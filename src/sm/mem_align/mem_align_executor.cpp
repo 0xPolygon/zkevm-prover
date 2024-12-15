@@ -1,6 +1,7 @@
 #include "mem_align_executor.hpp"
 #include "utils.hpp"
 #include "scalar.hpp"
+#include "zklog.hpp"
 
 uint8_t STEP (uint64_t i) { return i % 32; }
 uint8_t OFFSET (uint64_t i) { return ((i >> 5) % 32); }
@@ -19,7 +20,12 @@ uint8_t getByte (mpz_class value, uint8_t index) {
 
 void MemAlignExecutor::execute (vector<MemAlignAction> &input, MemAlignCommitPols &pols)
 {
-    uint64_t N = pols.degree();
+    // Check input size 
+    if (input.size()*32 > N)
+    {
+        zklog.error("MemAlignExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " > N/32=" + to_string(N/32));
+        exitProcess();
+    }
 
     uint64_t factors[4] = {1, 1<<8, 1<<16, 1<<24};
     for (uint64_t i=0; i<input.size(); i++) 
@@ -32,6 +38,12 @@ void MemAlignExecutor::execute (vector<MemAlignAction> &input, MemAlignCommitPol
         uint8_t wr256 = input[i].wr256;
         uint64_t polIndex = i * 32;
         mpz_class vv = v;
+        
+        // setting index when result was ready
+        uint64_t polResultIndex = ((i+1) * 32)%N;
+        if (!(wr8 || wr256)) pols.resultRd[polResultIndex] = fr.one();
+        if (wr8) pols.resultWr8[polResultIndex] = fr.one();
+        if (wr256) pols.resultWr256[polResultIndex] = fr.one();
 
         for (uint8_t j=0; j<32; j++)
         {
@@ -85,5 +97,5 @@ void MemAlignExecutor::execute (vector<MemAlignAction> &input, MemAlignCommitPol
         }
     }    
 
-    cout << "MemAlignExecutor successfully processed " << input.size() << "  actions" << endl;
+    zklog.info("MemAlignExecutor successfully processed " + to_string(input.size()) + " memory align actions (" + to_string((double(input.size())*32*100)/N) + "%)");
 }

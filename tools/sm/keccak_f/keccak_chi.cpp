@@ -1,5 +1,6 @@
-#include "keccak_state.hpp"
+#include "keccak.hpp"
 #include "keccak_rc.hpp"
+#include "gate_state.hpp"
 
 /*
 Keccak-f Chi permutation.
@@ -9,7 +10,7 @@ Steps:
 2. Return A′
 */
 
-void KeccakChi (KeccakState &S, uint64_t ir)
+void KeccakChi (GateState &S, uint64_t ir)
 {
     // Init KeccakRC, if required
     KeccakRCInit();
@@ -27,7 +28,7 @@ void KeccakChi (KeccakState &S, uint64_t ir)
                 aux2 = S.getFreeRef();
                 if ((ir==23) && (!((x==0) && (y==0)) || (KeccakRC[ir][z]==0)))
                 {
-                    S.XORN(aux1, S.SinRefs[Bit(x, y, z)], aux2);
+                    S.XOR(aux1, S.SinRefs[Bit(x, y, z)], aux2);
                 }
                 else
                 {

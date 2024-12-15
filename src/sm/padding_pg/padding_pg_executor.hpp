@@ -4,9 +4,12 @@
 #include <vector>
 #include <array>
 #include <gmpxx.h>
-#include "commit_pols.hpp"
+#include "definitions.hpp"
+#include "sm/pols_generated/commit_pols.hpp"
 #include "goldilocks_base_field.hpp"
 #include "poseidon_goldilocks.hpp"
+
+USING_PROVER_FORK_NAMESPACE;
 
 using namespace std;
 
@@ -18,7 +21,9 @@ public:
     uint64_t realLen;
     vector<uint64_t> reads;
     mpz_class hash;
-    PaddingPGExecutorInput() : realLen(0) {};
+    bool digestCalled;
+    bool lenCalled;
+    PaddingPGExecutorInput() : realLen(0), digestCalled(false), lenCalled(false) {};
 };
 
 class PaddingPGExecutor
@@ -31,7 +36,7 @@ private:
     const uint64_t bytesPerBlock;
     const uint64_t N;
 
-void prepareInput (vector<PaddingPGExecutorInput> &input);
+uint64_t prepareInput (vector<PaddingPGExecutorInput> &input);
 
 public:
     PaddingPGExecutor(Goldilocks &fr, PoseidonGoldilocks &poseidon) :
@@ -40,8 +45,8 @@ public:
         bytesPerElement(7),
         nElements(8),
         bytesPerBlock(bytesPerElement*nElements),
-        N(PaddingPGCommitPols::pilDegree()) {};
-    void execute (vector<PaddingPGExecutorInput> &input, PaddingPGCommitPols &pols, vector<array<Goldilocks::Element, 16>> &required);
+        N(PROVER_FORK_NAMESPACE::PaddingPGCommitPols::pilDegree()) {};
+    void execute (vector<PaddingPGExecutorInput> &input, PROVER_FORK_NAMESPACE::PaddingPGCommitPols &pols, vector<array<Goldilocks::Element, 17>> &required);
 };
 
 

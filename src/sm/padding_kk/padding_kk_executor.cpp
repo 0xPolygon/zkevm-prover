@@ -2,16 +2,28 @@
 #include "padding_kk_executor.hpp"
 #include "scalar.hpp"
 #include "utils.hpp"
+#include "goldilocks_precomputed.hpp"
+#include "zklog.hpp"
 
 using namespace std;
 
-void PaddingKKExecutor::prepareInput (vector<PaddingKKExecutorInput> &input)
+uint64_t PaddingKKExecutor::prepareInput (vector<PaddingKKExecutorInput> &input)
 {
+    uint64_t totalInputBytes = 0;
 
     for (uint64_t i=0; i<input.size(); i++)
     {
         if (input[i].data.length() > 0)
         {
+            // Make sure we got an even number of characters
+            if ((input[i].data.length()%2) != 0)
+            {
+                zklog.error("PaddingKKExecutor::prepareInput() detected at entry i=" + to_string(i) + " a odd data string length=" + to_string(input[i].data.length()));
+                exitProcess();
+            }
+
+            // Convert string (data) into binary (dataBytes)
+            input[i].dataBytes.clear();
             for (uint64_t c=0; c<input[i].data.length(); c+=2)
             {
                 uint8_t aux;
@@ -20,25 +32,34 @@ void PaddingKKExecutor::prepareInput (vector<PaddingKKExecutorInput> &input)
             }
         }
 
-        string hashString = keccak256(input[i].dataBytes);
-        input[i].hash.set_str(Remove0xIfPresent(hashString), 16);
+        keccak256(input[i].dataBytes, input[i].hash);
 
         input[i].realLen = input[i].dataBytes.size();
 
+        // Add padding
         input[i].dataBytes.push_back(0x1);
-
-
         while (input[i].dataBytes.size() % bytesPerBlock) input[i].dataBytes.push_back(0);
-
         input[i].dataBytes[ input[i].dataBytes.size() - 1] |= 0x80;
+
+        totalInputBytes += input[i].dataBytes.size();
     }
+
+    return totalInputBytes;
 }
 
 void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingKKCommitPols &pols, vector<PaddingKKBitExecutorInput> &required)
 {
-    prepareInput(input);
+    uint64_t totalInputBytes = prepareInput(input);
+
+    // Check input size
+    if (totalInputBytes > (44*bytesPerBlock*(N/blockSize)))
+    {
+        zklog.error("PaddingKKExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " totalInputBytes=" + to_string(totalInputBytes) + " > 44*bytesPerBlock*(N/blockSize)=" + to_string(44*bytesPerBlock*(N/blockSize)));
+        exitProcess();
+    }
 
     uint64_t p = 0;
+    uint64_t pDone = 0;
 
     uint64_t addr = 0;
 
@@ -68,15 +89,28 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
             pols.rem[p] = fr.sub(fr.fromU64(input[i].realLen), fr.fromU64(j));
             if (!fr.isZero(pols.rem[p]))
             {
-                pols.remInv[p] = fr.inv(pols.rem[p]);
-                if (fr.toU64(pols.rem[p]) > 0xFFFF)
+                pols.remInv[p] = glp.inv(pols.rem[p]);
+                if (fr.toS64(pols.rem[p]) < 0)
                 {
                     pols.spare[p] = fr.one();
                 }
             }
             
-            if (j == 0) pols.firstHash[p] = fr.one();
             pols.incCounter[p] = fr.fromU64((j / bytesPerBlock) +1);
+            
+            bool lastBlock = (p % bytesPerBlock) == (bytesPerBlock - 1);
+            bool lastHash = lastBlock && ((!fr.isZero(pols.spare[p])) || fr.isZero(pols.rem[p]));
+            if (lastHash)
+            {
+                if (input[i].lenCalled)
+                {
+                    pols.lastHashLen[p] = fr.one();
+                }
+                if (input[i].digestCalled)
+                {
+                    pols.lastHashDigest[p] = fr.one();
+                }
+            }
 
             if (lastOffset == 0)
             {
@@ -89,14 +123,17 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
                 pols.crLen[p] = pols.crLen[p-1];
                 pols.crOffset[p] = fr.sub(pols.crOffset[p-1], fr.one());
             }
-            if (!fr.isZero(pols.crOffset[p])) pols.crOffsetInv[p] = fr.inv(pols.crOffset[p]);
+            if (!fr.isZero(pols.crOffset[p])) pols.crOffsetInv[p] = glp.inv(pols.crOffset[p]);
 
             uint64_t crAccI = fr.toU64(pols.crOffset[p])/4;
             uint64_t crSh = (fr.toU64(pols.crOffset[p])%4)*8;
 
             for (uint64_t k=0; k<8; k++)
             {
-                if (k == crAccI) crF[k][p] = fr.fromU64(1 << crSh);
+                if (k == crAccI)
+                {
+                    crF[k][p] = fr.fromU64(1 << crSh);
+                }
                 if (!fr.isZero(pols.crOffset[p]))
                 {
                     crV[k][p+1] = (k==crAccI) ? fr.fromU64(fr.toU64(crV[k][p]) + (fr.toU64(pols.freeIn[p])<<crSh)) : crV[k][p];
@@ -110,7 +147,7 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
                 PaddingKKBitExecutorInput paddingKKBitExecutorInput;
                 for (uint64_t k=0; k<bytesPerBlock; k++)
                 {
-                    paddingKKBitExecutorInput.r[k] = input[i].dataBytes[j - bytesPerBlock + 1 + k];
+                    paddingKKBitExecutorInput.data[k] = input[i].dataBytes[j - bytesPerBlock + 1 + k];
                 }
                 paddingKKBitExecutorInput.connected = (j < bytesPerBlock) ? false : true;
                 required.push_back(paddingKKBitExecutorInput);
@@ -147,12 +184,14 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
         addr += 1;
     }
 
-    uint64_t nTotalBlocks = 9*(N/blockSize);
+    pDone = p;
+
+    uint64_t nTotalBlocks = 44*(N/blockSize);
     uint64_t nUsedBlocks = p/bytesPerBlock;
 
     if (nUsedBlocks > nTotalBlocks)
     {
-        cerr << "Error: PaddingKKExecutor::execute() Too many keccak blocks nUsedBlocks=" << nUsedBlocks << " > nTotalBlocks=" << nTotalBlocks << " BlockSize=" << blockSize << endl;
+        zklog.error("PaddingKKExecutor::execute() Too many keccak blocks nUsedBlocks=" + to_string(nUsedBlocks) + " > nTotalBlocks=" + to_string(nTotalBlocks) + " BlockSize=" + to_string(blockSize));
         exitProcess();
     }
 
@@ -163,11 +202,6 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
     {
         bytes0[i] = (i==0) ? 1 : (  (i==bytesPerBlock-1) ? 0x80 : 0);
     }
-    string hashZeroInput = "";
-    string hashZero = keccak256(hashZeroInput);
-    mpz_class hashZeroScalar(hashZero);
-    Goldilocks::Element hash0[8];
-    scalar2fea(fr, hashZeroScalar, hash0);
 
     for (uint64_t i=0; i<nFullUnused; i++)
     {
@@ -177,14 +211,16 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
             if (j == 0)
             {
                 pols.freeIn[p] = fr.one();
-                pols.firstHash[p] = fr.one();
             }
             else
             {
                 if (j == (bytesPerBlock - 1)) pols.freeIn[p] = fr.fromU64(0x80);
                 pols.rem[p] = fr.neg(fr.fromU64(j));
-                pols.remInv[p] = fr.inv(pols.rem[p]);
-                if (fr.toU64(pols.rem[p]) > 0xFFFF) pols.spare[p] = fr.one();
+                pols.remInv[p] = glp.inv(pols.rem[p]);
+                if (fr.toS64(pols.rem[p]) < 0)
+                {
+                    pols.spare[p] = fr.one();
+                }
             }
 
             pols.incCounter[p] = fr.one();
@@ -197,7 +233,7 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
                 PaddingKKBitExecutorInput paddingKKBitExecutorInput;
                 for (uint64_t k=0; k<bytesPerBlock; k++)
                 {
-                    paddingKKBitExecutorInput.r[k] = bytes0[k];
+                    paddingKKBitExecutorInput.data[k] = bytes0[k];
                 }
                 paddingKKBitExecutorInput.connected = false;
                 required.push_back(paddingKKBitExecutorInput);
@@ -235,14 +271,10 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
         pols.addr[p] = fr.fromU64(addr);
     
 
-        if (p == fp)
-        {
-            pols.firstHash[p] = fr.one(); 
-        }
-        else
+        if (p != fp)
         {
             pols.rem[p] = fr.sub(pols.rem[p-1], fr.one());
-            if (!fr.isZero(pols.rem[p])) pols.remInv[p] = fr.inv(pols.rem[p]);
+            if (!fr.isZero(pols.rem[p])) pols.remInv[p] = glp.inv(pols.rem[p]);
             pols.spare[p] = fr.one();
         }
 
@@ -253,5 +285,5 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
         p += 1;
     }
 
-    cout << "PaddingKKExecutor successfully processed " << input.size() << " Keccak hashes" << endl;
+    zklog.info("PaddingKKExecutor successfully processed " + to_string(input.size()) + " Keccak hashes p=" + to_string(p) + " pDone=" + to_string(pDone) + " (" + to_string((double(pDone)*100)/N) + "%)");
 }
