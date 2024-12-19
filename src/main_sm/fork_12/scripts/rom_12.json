@@ -185313,7 +185313,7 @@
    "fileName": "constants.zkasm"
   },
   "MAX_CNT_POSEIDON_G_LIMIT": {
-   "value": "1118481",
+   "value": "1082401",
    "type": "CONST",
    "line": 114,
    "fileName": "constants.zkasm"
