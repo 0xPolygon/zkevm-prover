@@ -115,9 +115,9 @@ void PoseidonGExecutor::execute (   vector<array<Goldilocks::Element, 17>> &inpu
     uint64_t size = sizeMain + sizePadding + sizeStorage;
 
     // Check input size
-    if (size > maxHashes)
+    if (size > maxInputs)
     {
-        zklog.error("PoseidonGExecutor::execute() Not enough Poseidon slots inputs size=" + to_string(size) + " > maxHashes=" + to_string(maxHashes));
+        zklog.error("PoseidonGExecutor::execute() Not enough Poseidon slots inputs size=" + to_string(size) + " > maxInputs=" + to_string(maxInputs));
         exitProcess();
     }
 

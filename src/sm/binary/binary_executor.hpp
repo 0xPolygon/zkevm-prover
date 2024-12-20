@@ -18,6 +18,8 @@ private:
     const uint64_t N;
     vector<vector<uint64_t>> FACTOR;
     vector<uint64_t> RESET;
+public:
+    const uint64_t maxInputs;
 
 public:
     BinaryExecutor (Goldilocks &fr, const Config &config);

@@ -20,12 +20,15 @@ private:
     RawFec fec;
     const Config &config;
     const uint64_t N;
+public:
+    const uint64_t maxInputs;
 
 public:
     ArithExecutor (Goldilocks &fr, const Config &config) :
         fr(fr),
         config(config),
-        N(getForkN(PROVER_FORK_ID))
+        N(getForkN(PROVER_FORK_ID)),
+        maxInputs(N/32)
     {
     }
     ~ArithExecutor ()

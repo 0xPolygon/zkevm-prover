@@ -64,9 +64,9 @@ void PaddingSha256Executor::execute (vector<PaddingSha256ExecutorInput> &input, 
 
     // Check input size: totalInputBytes/bitsPerElement <= bytesPerBlock* maxBlocks; maxBlocks=N/blockSize
     //                   this condition depends on all the SM used to evaluated the Sha256 hash
-    if (totalInputBytes * blockSize > bitsPerElement*bytesPerBlock*N)
+    if (totalInputBytes > maxInputs*bytesPerBlock)
     {
-        zklog.error("PaddingKKExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " totalInputBytes=" + to_string(totalInputBytes) + " > bitsPerElement*bytesPerBlock*(N/blockSize)=" + to_string(bitsPerElement*bytesPerBlock*(N/blockSize)));
+        zklog.error("PaddingKKExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " totalInputBytes=" + to_string(totalInputBytes) + " > bitsPerElement*bytesPerBlock*(N/blockSize)=" + to_string(maxInputs*bytesPerBlock));
         exitProcess();
     }
 
