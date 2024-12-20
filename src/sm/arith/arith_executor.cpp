@@ -34,9 +34,9 @@ void ArithExecutor::execute (vector<ArithAction> &action, ArithCommitPols &pols)
     pBN254++;
 
     // Check that we have enough room in polynomials  TODO: Do this check in JS
-    if (action.size()*32 > N)
+    if (action.size() > maxInputs)
     {
-        zklog.error("ArithExecutor::execute() Too many Arith entries=" + to_string(action.size()) + " > N/32=" + to_string(N/32));
+        zklog.error("ArithExecutor::execute() Too many Arith entries=" + to_string(action.size()) + " > maxInputs=N/32=" + to_string(maxInputs));
         exitProcess();
     }
 

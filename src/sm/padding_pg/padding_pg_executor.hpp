@@ -36,7 +36,9 @@ private:
     const uint64_t nElements;
     const uint64_t bytesPerBlock;
     const uint64_t N;
-
+public:
+    const uint64_t maxInputs;
+private:
 uint64_t prepareInput (vector<PaddingPGExecutorInput> &input);
 
 public:
@@ -46,7 +48,8 @@ public:
         bytesPerElement(7),
         nElements(8),
         bytesPerBlock(bytesPerElement*nElements),
-        N(getForkN(PROVER_FORK_ID)) {};
+        N(getForkN(PROVER_FORK_ID)),
+        maxInputs(N/bytesPerBlock) {};
     void execute (vector<PaddingPGExecutorInput> &input, PROVER_FORK_NAMESPACE::PaddingPGCommitPols &pols, vector<array<Goldilocks::Element, 17>> &required);
 };
 

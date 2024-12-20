@@ -21,9 +21,9 @@ uint8_t getByte (mpz_class value, uint8_t index) {
 void MemAlignExecutor::execute (vector<MemAlignAction> &input, MemAlignCommitPols &pols)
 {
     // Check input size 
-    if (input.size()*32 > N)
+    if (input.size() > maxInputs)
     {
-        zklog.error("MemAlignExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " > N/32=" + to_string(N/32));
+        zklog.error("MemAlignExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " > maxInputs=N/32=" + to_string(maxInputs));
         exitProcess();
     }
 

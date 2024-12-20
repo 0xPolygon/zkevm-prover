@@ -93,7 +93,28 @@ public:
         poseidonGExecutor(fr, poseidon),
         memAlignExecutor(fr, config),
         climbKeyExecutor(fr, config)
-        {};
+        {
+            if (PROVER_FORK_ID == 10)
+            {
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_ARITH_LIMIT == arithExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_BINARY_LIMIT == binaryExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_KECCAK_F_LIMIT == paddingKKExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_MEM_ALIGN_LIMIT == memAlignExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_PADDING_PG_LIMIT == paddingPGExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_POSEIDON_G_LIMIT == poseidonGExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_10.constants.MAX_CNT_SHA256_F_LIMIT == paddingSha256Executor.maxInputs);
+            }
+            else
+            {
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_ARITH_LIMIT == arithExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_BINARY_LIMIT == binaryExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_KECCAK_F_LIMIT == paddingKKExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_MEM_ALIGN_LIMIT == memAlignExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_PADDING_PG_LIMIT == paddingPGExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_POSEIDON_G_LIMIT == poseidonGExecutor.maxInputs);
+                zkassertpermanent(mainExecutor_fork_10.romBatch_11.constants.MAX_CNT_SHA256_F_LIMIT == paddingSha256Executor.maxInputs);
+            }
+        };
 
     // Full version: all polynomials are evaluated, in all evaluations
     void executeBatch (ProverRequest &proverRequest, PROVER_FORK_NAMESPACE::CommitPols & commitPols);

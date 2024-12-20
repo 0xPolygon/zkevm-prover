@@ -52,9 +52,9 @@ void PaddingKKExecutor::execute (vector<PaddingKKExecutorInput> &input, PaddingK
     uint64_t totalInputBytes = prepareInput(input);
 
     // Check input size
-    if (totalInputBytes > (44*bytesPerBlock*(N/blockSize)))
+    if (totalInputBytes > (bytesPerBlock*maxInputs))
     {
-        zklog.error("PaddingKKExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " totalInputBytes=" + to_string(totalInputBytes) + " > 44*bytesPerBlock*(N/blockSize)=" + to_string(44*bytesPerBlock*(N/blockSize)));
+        zklog.error("PaddingKKExecutor::execute() Too many entries input.size()=" + to_string(input.size()) + " totalInputBytes=" + to_string(totalInputBytes) + " > 44*bytesPerBlock*(N/blockSize)=" + to_string(bytesPerBlock*maxInputs));
         exitProcess();
     }
 

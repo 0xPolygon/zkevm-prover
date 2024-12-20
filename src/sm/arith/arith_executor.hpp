@@ -21,12 +21,15 @@ private:
     const Config &config;
     const uint64_t N;
     mpz_class pFec;
+public:
+    const uint64_t maxInputs;
 
 public:
     ArithExecutor (Goldilocks &fr, const Config &config) :
         fr(fr),
         config(config),
-        N(getForkN(PROVER_FORK_ID))
+        N(getForkN(PROVER_FORK_ID)),
+        maxInputs(N/32)
     {
         // Calculate the prime number
         fec2scalar(fec, fec.negOne(), pFec);
