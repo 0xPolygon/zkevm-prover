@@ -13,7 +13,8 @@ using json = nlohmann::json;
 BinaryExecutor::BinaryExecutor (Goldilocks &fr, const Config &config) :
     fr(fr),
     config(config),
-    N(getForkN(PROVER_FORK_ID))
+    N(getForkN(PROVER_FORK_ID)),
+    maxInputs(N/LATCH_SIZE)
 {
     TimerStart(BINARY_EXECUTOR);
 
@@ -83,9 +84,9 @@ void BinaryExecutor::buildReset (void)
 void BinaryExecutor::execute (vector<BinaryAction> &action, BinaryCommitPols &pols)
 {
     // Check that we have enough room in polynomials  TODO: Do this check in JS
-    if (action.size()*LATCH_SIZE > N)
+    if (action.size() > maxInputs)
     {
-        zklog.error("BinaryExecutor::execute() Too many Binary entries=" + to_string(action.size()) + " > N/LATCH_SIZE=" + to_string(N/LATCH_SIZE));
+        zklog.error("BinaryExecutor::execute() Too many Binary entries=" + to_string(action.size()) + " > maxInputs=N/LATCH_SIZE=" + to_string(maxInputs));
         exitProcess();
     }
 

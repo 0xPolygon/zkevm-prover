@@ -38,7 +38,9 @@ private:
     const uint64_t blockSize;
     const uint64_t bytesPerBlock;
     const uint64_t N;
-
+public:
+    const uint64_t maxInputs;
+private:
     /* Hash of an empty/zero message */
     mpz_class hashZeroScalar;
     Goldilocks::Element hash0[8];
@@ -52,7 +54,8 @@ public:
         fr(fr),
         blockSize(155286),
         bytesPerBlock(136),
-        N(getForkN(PROVER_FORK_ID))
+        N(getForkN(PROVER_FORK_ID)),
+        maxInputs(44*(N/blockSize))
     {
         keccak256(NULL, 0, hashZeroScalar);
         scalar2fea(fr, hashZeroScalar, hash0);

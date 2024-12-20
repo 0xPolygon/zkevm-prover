@@ -22,7 +22,9 @@ private:
     const uint64_t t;
     const uint64_t nRoundsF;
     const uint64_t nRoundsP;
-    const uint64_t maxHashes;
+public:
+    const uint64_t maxInputs;
+private:
     const array<Goldilocks::Element,12> MCIRC;
     const array<Goldilocks::Element,12> MDIAG;
     array<array<Goldilocks::Element,12>,12> M;
@@ -34,7 +36,7 @@ public:
         t(12),
         nRoundsF(8),
         nRoundsP(22),
-        maxHashes(N / (nRoundsF + nRoundsP + 1)),
+        maxInputs(N / (nRoundsF + nRoundsP + 1)),
         MCIRC({17, 15, 41, 16, 2, 28, 13, 13, 39, 18, 34, 20}),
         MDIAG({8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0})
     {
