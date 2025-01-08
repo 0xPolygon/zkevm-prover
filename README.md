@@ -60,9 +60,55 @@ The following packages must be installed.
 #### Ubuntu/Debian
 
 ```sh
+# For Ubuntu 20.04/22.04 and Debian 11/12
 apt update
-apt install build-essential libbenchmark-dev libomp-dev libgmp-dev nlohmann-json3-dev postgresql libpqxx-dev libpqxx-doc nasm libsecp256k1-dev grpc-proto libsodium-dev libprotobuf-dev libssl-dev cmake libgrpc++-dev protobuf-compiler protobuf-compiler-grpc uuid-dev
+apt install build-essential libbenchmark-dev libomp-dev libgmp-dev \
+    nlohmann-json3-dev postgresql libpqxx-dev libpqxx-doc nasm \
+    libsecp256k1-dev grpc-proto libsodium-dev libprotobuf-dev \
+    libssl-dev cmake libgrpc++-dev protobuf-compiler \
+    protobuf-compiler-grpc uuid-dev
+
+# If you encounter libpqxx version conflicts:
+wget https://github.com/jtv/libpqxx/archive/refs/tags/6.4.5.tar.gz
+tar xzf 6.4.5.tar.gz
+cd libpqxx-6.4.5
+./configure
+make
+sudo make install
 ```
+
+#### Common Issues and Solutions
+
+1. **libpqxx version mismatch**:
+   ```sh
+   # Remove newer version if installed
+   apt remove libpqxx-dev
+   # Then install v6.4.5 as shown above
+   ```
+
+2. **Protobuf compilation errors**:
+   ```sh
+   # Clean and regenerate protobuf files
+   cd src/grpc
+   make clean
+   make
+   ```
+
+3. **GRPC issues**:
+   ```sh
+   # Install from official repo if needed
+   sudo add-apt-repository ppa:grpc/grpc
+   sudo apt update
+   sudo apt install grpc-dev
+   ```
+
+4. **Build fails with OpenMP errors**:
+   ```sh
+   # Make sure to install the correct dev package
+   apt install libomp-dev
+   # Add to environment if needed
+   export LD_LIBRARY_PATH=/usr/local/lib:$LD_LIBRARY_PATH
+   ```
 
 #### openSUSE
 ```sh
