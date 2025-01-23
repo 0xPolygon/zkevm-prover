@@ -326,7 +326,7 @@ string generate(const json &rom, uint64_t forkID, string forkNamespace, const st
     code += "    bool bProcessBatch = (proverRequest.type == prt_processBatch);\n";
     code += "    bool bUnsignedTransaction = (proverRequest.input.from != \"\") && (proverRequest.input.from != \"0x\");\n\n";
     
-    code += "    // Unsigned transactions (from!=empty) are intended to be used to \"estimage gas\" (or \"call\")\n";
+    code += "    // Unsigned transactions (from!=empty) are intended to be used to \"estimate gas\" (or \"call\")\n";
     code += "    // In prover mode, we cannot accept unsigned transactions, since the proof would not meet the PIL constrains\n";
     code += "    if (bUnsignedTransaction && !bProcessBatch)\n";
     code += "    {\n";
