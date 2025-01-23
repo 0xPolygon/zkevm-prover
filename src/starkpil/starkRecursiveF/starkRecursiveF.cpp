@@ -147,14 +147,14 @@ void StarkRecursiveF::genProof(FRIProofC12 &proof, Goldilocks::Element publicInp
     StarkRecursiveFSteps recurisveFsteps;
     StarkRecursiveFSteps *steps = &recurisveFsteps;
     // Initialize vars
-    uint64_t numCommited = starkInfo.nCm1;
+    uint64_t numCommitted = starkInfo.nCm1;
     TranscriptBN128 transcript;
     Polinomial evals(N, FIELD_EXTENSION);
     Polinomial xDivXSubXi(NExtended, FIELD_EXTENSION);
     Polinomial xDivXSubWXi(NExtended, FIELD_EXTENSION);
     Polinomial challenges(NUM_CHALLENGES, FIELD_EXTENSION);
 
-    CommitPolsStarks cmPols(pAddress, starkInfo.mapDeg.section[eSection::cm1_n], numCommited);
+    CommitPolsStarks cmPols(pAddress, starkInfo.mapDeg.section[eSection::cm1_n], numCommitted);
 
     RawFr::Element rootC;
     RawFr::Element root0;
