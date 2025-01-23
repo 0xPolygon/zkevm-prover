@@ -3518,7 +3518,7 @@ code += "    #endif\n";
             code += "        {\n";
             code += "            proverRequest.result = ZKR_SM_MAIN_HASHP_SIZE_MISMATCH;\n";
             code += "            zkPC=" + to_string(zkPC) +";\n";
-            code += "            mainExecutor.logError(ctx, \"HashP 2 diferent read sizes in the same position addr=\" + to_string(addr) + \" pos=\" + to_string(pos));\n";
+            code += "            mainExecutor.logError(ctx, \"HashP 2 different read sizes in the same position addr=\" + to_string(addr) + \" pos=\" + to_string(pos));\n";
             code += "            mainExecutor.pHashDB->cancelBatch(proverRequest.uuid);\n";
             code += "            return;\n";
             code += "        }\n";
