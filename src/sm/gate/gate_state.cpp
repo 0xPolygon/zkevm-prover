@@ -94,9 +94,12 @@ void GateState::setRin(uint8_t *pRin)
 
     zkassert(pRin != NULL);
 
+    uint64_t ref;
     for (uint64_t i = 0; i < 1088; i++)
     {
-        uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        ref = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (ref + rel_dis);
+        // uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
         gate[ref].pin[pin_b].bit = pRin[i];
         gate[ref].pin[pin_b].source = external;
     }
@@ -111,9 +114,12 @@ void GateState::mixRin(void)
         exitProcess();
     }
 
+    uint64_t ref;
     for (uint64_t i = 0; i < 1088; i++)
     {
-        uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        ref = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (ref + rel_dis);
+        // uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
         XOR(ref, pin_a, ref, pin_b, ref);
     }
 }
@@ -225,9 +231,12 @@ void GateState::copySoutToSinAndResetRefs(void)
     resetBitsAndCounters();
 
     // Restore local to Sin
+    uint64_t idx;
     for (uint64_t i = 0; i < gateConfig.sinRefNumber; i++)
     {
-        gate[gateConfig.sinRef0 + i * gateConfig.sinRefDistance].pin[pin_a].bit = localSout[i];
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        idx = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (idx + rel_dis);
+        gate[idx].pin[pin_a].bit = localSout[i];
     }
 
     // Free memory

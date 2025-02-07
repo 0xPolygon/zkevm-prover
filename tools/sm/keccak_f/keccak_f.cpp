@@ -29,7 +29,6 @@ void KeccakF (GateState &S)
     {
         uint64_t rel_dis = i % S.gateConfig.soutRefGroupBy;
         uint64_t aux = (rel_dis == 0) ? (S.gateConfig.soutRef0 + S.gateConfig.soutRefDistance * i / S.gateConfig.soutRefGroupBy) : (aux + rel_dis);
-        cout << "auxOut=" << aux << endl;
         // S.XOR( S.gateConfig.zeroRef, pin_a, S.SoutRefs[i], pin_r, aux ); // Out in B
         S.XOR( S.SoutRefs[i], pin_r, S.gateConfig.zeroRef, pin_a, aux ); // Out in A
         S.SoutRefs[i] = aux;
