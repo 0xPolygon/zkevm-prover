@@ -14,41 +14,41 @@ permissions:
   contents: read
   packages: write
 
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+  
+# Avoid parallel builds for the same ref
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+  
 jobs:
   build-docker:
     runs-on: [self-hosted, linux, X64, hc]
-
-    outputs:
-      sha_short: ${{ steps.setvars.outputs.sha_short }}
-      tag: ${{ steps.setvars.outputs.tag }}
-      image_tag: ${{ steps.setvars.outputs.image_tag }}
-
+    
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
           submodules: true  # replaces manual submodule init/update
 
-      - name: Set variables
-        id: setvars
-        shell: bash
-        run: |
-          SHA_SHORT="${GITHUB_SHA::7}"
-
-          if [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
-          else
-            # Use ref_name when running on push; otherwise fallback to short SHA
-            if [ -n "${{ github.ref_name }}" ]; then
-              TAG="${{ github.ref_name }}"
-            else
-              TAG="manual-${SHA_SHORT}"
-            fi
-          fi
-
-          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "image_tag=ghcr.io/${{ github.repository_owner }}/zkevm-prover:${TAG}" >> "$GITHUB_OUTPUT"
+      # Derive image tags/labels
+      - name: Docker meta
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: |
+            ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          tags: |
+            # latest if the push is to develop
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/develop' }}
+            # always short sha
+            type=sha,format=short
+            # if the event is a tag, use semver (remove the 'v' if it exists)
+            type=semver,pattern={{version}},enable=${{ startsWith(github.ref, 'refs/tags/') }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repositoryUrl }}
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -71,12 +71,14 @@ jobs:
           platforms: linux/amd64
           target: executor
           push: true
-          tags: |
-            ghcr.io/${{ github.repository_owner }}/zkevm-prover:${{ steps.setvars.outputs.tag }}
-            ghcr.io/${{ github.repository_owner }}/zkevm-prover:${{ steps.setvars.outputs.sha_short }}
-          labels: |
-            org.opencontainers.image.source=${{ github.repository }}
-            org.opencontainers.image.revision=${{ github.sha }}
+          # BuildKit cache
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # SLSA provenance & SBOM (if supported by your Buildx builder)
+          provenance: true
+          sbom: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
 
   # node-tests:
   #   needs: build-docker
