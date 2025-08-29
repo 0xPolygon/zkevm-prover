@@ -1,9 +1,19 @@
-name: Build docker image tagged
+name: Build & push Docker image (GHCR)
 
 on:
   push:
     tags:
-    - 'v[0-9]+.[0-9]+.[0-9]+*' # this action will only run on tags that follow semver
+      - 'v[0-9]+.[0-9]+.[0-9]+*'   # run on semver tags
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag to publish (e.g., v1.2.3 or test-123). If empty, uses the pushed tag or falls back to short SHA.'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-docker:
@@ -15,34 +25,49 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          submodules: true   # replaces manual init/update steps
 
-      - name: Submodule init
+      - name: Set vars (tag & sha)
+        id: setvars
+        shell: bash
         run: |
-          git submodule init
-          git submodule update --remote
+          # Prefer manual input; then pushed tag; else short SHA
+          TAG_INPUT="${{ inputs.tag }}"
+          if [ -n "$TAG_INPUT" ]; then
+            TAG="$TAG_INPUT"
+          elif [ "${{ github.ref_type }}" = "tag" ] && [ -n "${{ github.ref_name }}" ]; then
+            TAG="${{ github.ref_name }}"
+          else
+            TAG="manual-${GITHUB_SHA::7}"
+          fi
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "sha_short=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v1
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Executor
-        id: docker_build_executor
-        uses: docker/build-push-action@v2
+      - name: Build and push (executor)
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile-GHA
           platforms: linux/amd64
-          push: true
           target: executor
+          push: true
           tags: |
-            hermeznetwork/zkevm-prover:${{ github.ref_name }}
-            
+            ghcr.io/${{ github.repository_owner }}/zkevm-prover:${{ steps.setvars.outputs.tag }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
