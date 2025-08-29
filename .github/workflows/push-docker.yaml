@@ -1,8 +1,18 @@
-name: Build docker image and run node tests
+name: Build docker image and run node tests (GHCR)
 
 on:
   push:
     branches: [ develop, main, fork_8 ]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Optional image tag to publish (defaults to branch name or short SHA fallback)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+  packages: write
 
 jobs:
   build-docker:
@@ -11,52 +21,68 @@ jobs:
     outputs:
       sha_short: ${{ steps.setvars.outputs.sha_short }}
       tag: ${{ steps.setvars.outputs.tag }}
+      image_tag: ${{ steps.setvars.outputs.image_tag }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v2
+        uses: actions/checkout@v4
+        with:
+          submodules: true  # replaces manual submodule init/update
 
       - name: Set variables
         id: setvars
+        shell: bash
         run: |
-          echo "::set-output name=sha_short::$(git rev-parse --short HEAD)"
-          echo "tag=${GITHUB_REF#refs/*/}" >> $GITHUB_OUTPUT
+          SHA_SHORT="${GITHUB_SHA::7}"
 
-      - name: Submodule init
-        run: |
-          git submodule init
-          git submodule update --remote
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          else
+            # Use ref_name when running on push; otherwise fallback to short SHA
+            if [ -n "${{ github.ref_name }}" ]; then
+              TAG="${{ github.ref_name }}"
+            else
+              TAG="manual-${SHA_SHORT}"
+            fi
+          fi
+
+          echo "sha_short=$SHA_SHORT" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "image_tag=ghcr.io/${{ github.repository_owner }}/zkevm-prover:${TAG}" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@v1
+        uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v1
+        uses: docker/setup-buildx-action@v3
 
-      - name: Login to DockerHub
-        uses: docker/login-action@v1
+      - name: Login to GHCR
+        uses: docker/login-action@v3
         with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push Executor
-        id: docker_build_executor
-        uses: docker/build-push-action@v2
+      - name: Build and push (executor)
+        uses: docker/build-push-action@v6
         with:
           context: .
           file: Dockerfile-GHA
           platforms: linux/amd64
-          push: true
           target: executor
+          push: true
           tags: |
-            hermeznetwork/zkevm-prover:${{ steps.setvars.outputs.tag }}
-            hermeznetwork/zkevm-prover:${{ steps.setvars.outputs.sha_short }}
+            ghcr.io/${{ github.repository_owner }}/zkevm-prover:${{ steps.setvars.outputs.tag }}
+            ghcr.io/${{ github.repository_owner }}/zkevm-prover:${{ steps.setvars.outputs.sha_short }}
+          labels: |
+            org.opencontainers.image.source=${{ github.repository }}
+            org.opencontainers.image.revision=${{ github.sha }}
 
   # node-tests:
   #   needs: build-docker
   #   uses: 0xPolygonHermez/zkevm-node/.github/workflows/test-from-prover.yml@develop
   #   with:
-  #     prover_image: hermeznetwork/zkevm-prover:${{needs.build-docker.outputs.image_tag}}"
+  #     prover_image: ${{ needs.build-docker.outputs.image_tag }}
   #   secrets:
-  #     DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
-  #     DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+  #     # If GHCR package is private, that workflow needs a token with read:packages to docker login ghcr.io
+  #     GHCR_READ_TOKEN: ${{ secrets.GITHUB_TOKEN }}
