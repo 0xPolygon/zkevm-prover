@@ -12,9 +12,11 @@ GateConfig SHA256GateConfig = GateConfig(
 	uint64_t(170000),
 	uint64_t(1),
 	uint64_t(45),
+    uint64_t(1),
 	uint64_t(768),
 	uint64_t(44),
 	uint64_t((45+(768*44))),
+    uint64_t(1),
 	uint64_t(256),
 	uint64_t(44),
     uint64_t(1<<23) // TODO

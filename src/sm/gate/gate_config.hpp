@@ -11,9 +11,11 @@ public:
     uint64_t maxRefs;
     uint64_t firstNextRef;
     uint64_t sinRef0;
+    uint64_t sinRefGroupBy;
     uint64_t sinRefNumber;
     uint64_t sinRefDistance;
     uint64_t soutRef0;
+    uint64_t soutRefGroupBy;
     uint64_t soutRefNumber;
     uint64_t soutRefDistance;
     uint64_t polLength;
@@ -24,22 +26,26 @@ public:
         maxRefs(0),
         firstNextRef(0),
         sinRef0(0),
+        sinRefGroupBy(0),
         sinRefNumber(0),
         sinRefDistance(0),
         soutRef0(0),
+        soutRefGroupBy(0),
         soutRefNumber(0),
         soutRefDistance(0),
         polLength(0) {};
 
-    GateConfig(uint64_t zeroRef, uint64_t slotSize, uint64_t maxRefs, uint64_t firstNextRef, uint64_t sinRef0, uint64_t sinRefNumber, uint64_t sinRefDistance, uint64_t soutRef0, uint64_t soutRefNumber, uint64_t soutRefDistance, uint64_t polLength) :
+    GateConfig(uint64_t zeroRef, uint64_t slotSize, uint64_t maxRefs, uint64_t firstNextRef, uint64_t sinRef0, uint64_t sinRefGroupBy, uint64_t sinRefNumber, uint64_t sinRefDistance, uint64_t soutRef0, uint64_t soutRefGroupBy, uint64_t soutRefNumber, uint64_t soutRefDistance, uint64_t polLength) :
         zeroRef(zeroRef),
         slotSize(slotSize),
         maxRefs(maxRefs),
         firstNextRef(firstNextRef),
         sinRef0(sinRef0),
+        sinRefGroupBy(sinRefGroupBy),
         sinRefNumber(sinRefNumber),
         sinRefDistance(sinRefDistance),
         soutRef0(soutRef0),
+        soutRefGroupBy(soutRefGroupBy),
         soutRefNumber(soutRefNumber),
         soutRefDistance(soutRefDistance),
         polLength(polLength) {};

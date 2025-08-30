@@ -27,9 +27,10 @@ void KeccakF (GateState &S)
     // both in pin a and r
     for (uint64_t i=0; i<1600; i++)
     {
-        uint64_t aux;
-        aux = S.gateConfig.soutRef0 + 44*i;
-        S.XOR( S.SoutRefs[i], pin_r, S.gateConfig.zeroRef, pin_a, aux );
+        uint64_t rel_dis = i % S.gateConfig.soutRefGroupBy;
+        uint64_t aux = (rel_dis == 0) ? (S.gateConfig.soutRef0 + S.gateConfig.soutRefDistance * i / S.gateConfig.soutRefGroupBy) : (aux + rel_dis);
+        // S.XOR( S.gateConfig.zeroRef, pin_a, S.SoutRefs[i], pin_r, aux ); // Out in B
+        S.XOR( S.SoutRefs[i], pin_r, S.gateConfig.zeroRef, pin_a, aux ); // Out in A
         S.SoutRefs[i] = aux;
         //cout << "KeccakF() i=" << i << " aux=" << aux << " pin_a=" << (uint64_t)S.gate[S.SoutRefs[i]].pin[pin_a].bit << " pin_r=" << (uint64_t)S.gate[S.SoutRefs[i]].pin[pin_r].bit << endl;
     }
