@@ -1,3 +1,22 @@
+> [!WARNING]
+> **This repository is deprecated and no longer maintained.**
+>
+> Polygon zkEVM has been retired. Polygon CDK chains now run on
+> [cdk-op-reth](https://github.com/0xPolygon/cdk-op-reth) and settle to the
+> [Agglayer](https://github.com/agglayer/agglayer) with pessimistic proofs and
+> full execution proofs. This code is kept for reference only. It will not
+> receive bug fixes, security patches, or releases.
+>
+> **Use instead:**
+> - Proving: [agglayer/provers](https://github.com/agglayer/provers)
+> - Agglayer node: [agglayer/agglayer](https://github.com/agglayer/agglayer)
+> - Docs: [docs.polygon.technology](https://docs.polygon.technology)
+>
+> **Have funds locked in contracts on zkEVM mainnet?** See
+> [zkevm-proof-of-ownership-kit](https://github.com/agglayer/zkevm-proof-of-ownership-kit).
+>
+> Security issues in live Polygon systems: see [SECURITY.md](https://github.com/0xPolygon/.github/blob/main/SECURITY.md).
+
 # zkEVM Prover
 
 Built to interface with Ethereum Virtual Machines (EVM), the prover provides critical services through three primary RPC clients: the Aggregator client, Executor service, and StateDB service. The Aggregator client connects to an Aggregator server and harnesses multiple zkEVM Provers simultaneously, thereby maximizing proof generation efficiency. This involves a process where the Prover component calculates a resulting state by processing EVM transaction batches and subsequently generates a proof based on the PIL polynomials definition and their constraints. The Executor service offers a mechanism to validate the integrity of proposed EVM transaction batches, ensuring they adhere to specific workload requirements. The StateDB service interfaces with a system's state (represented as a Merkle tree) and the corresponding database, thus serving as a centralized state information repository.
