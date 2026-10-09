@@ -13,9 +13,12 @@ void KeccakGen (
     uint8_t r[1088];
     while (input.getNextBits(r))
     {
+        uint64_t idx;
         for (uint64_t i=0; i<1088; i++)
         {
-            S.gate[S.gateConfig.sinRef0 + i*44].pin[pin_a].bit ^= r[i];
+            uint64_t rel_dis = i % S.gateConfig.sinRefGroupBy;
+            idx = (rel_dis == 0) ? (S.gateConfig.sinRef0 + S.gateConfig.sinRefDistance * i / S.gateConfig.sinRefGroupBy) : (idx + rel_dis);
+            S.gate[idx].pin[pin_a].bit ^= r[i];
         }
         KeccakF(S);
         S.printCounters();

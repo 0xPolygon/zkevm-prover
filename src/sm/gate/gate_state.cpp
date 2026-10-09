@@ -54,13 +54,17 @@ void GateState::resetBitsAndCounters(void)
     // Initialize the input state references
     for (uint64_t i = 0; i < gateConfig.sinRefNumber; i++)
     {
-        SinRefs[i] = gateConfig.sinRef0 + gateConfig.sinRefDistance * i;
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        SinRefs[i] = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (SinRefs[i - 1] + rel_dis);
+        // cout << "SinRefs[" << i << "]=" << SinRefs[i] << endl;
     }
 
     // Initialize the output state references
     for (uint64_t i = 0; i < gateConfig.soutRefNumber; i++)
     {
-        SoutRefs[i] = gateConfig.soutRef0 + gateConfig.soutRefDistance * i;
+        uint64_t rel_dis = i % gateConfig.soutRefGroupBy;
+        SoutRefs[i] = (rel_dis == 0) ? (gateConfig.soutRef0 + gateConfig.soutRefDistance * i / gateConfig.sinRefGroupBy) : (SoutRefs[i - 1] + rel_dis);
+        // cout << "SoutRefs[" << i << "]=" << SoutRefs[i] << endl;
     }
 
     // Calculate the next reference (the first free slot)
@@ -90,9 +94,12 @@ void GateState::setRin(uint8_t *pRin)
 
     zkassert(pRin != NULL);
 
+    uint64_t ref;
     for (uint64_t i = 0; i < 1088; i++)
     {
-        uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        ref = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (ref + rel_dis);
+        // uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
         gate[ref].pin[pin_b].bit = pRin[i];
         gate[ref].pin[pin_b].source = external;
     }
@@ -107,9 +114,12 @@ void GateState::mixRin(void)
         exitProcess();
     }
 
+    uint64_t ref;
     for (uint64_t i = 0; i < 1088; i++)
     {
-        uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        ref = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (ref + rel_dis);
+        // uint64_t ref = gateConfig.sinRef0 + i * gateConfig.sinRefDistance;
         XOR(ref, pin_a, ref, pin_b, ref);
     }
 }
@@ -152,8 +162,8 @@ uint64_t GateState::getFreeRef(void)
 
         // Skip Sin gates
         if ((nextRef >= gateConfig.sinRef0) &&
-            (nextRef <= gateConfig.sinRef0 + (gateConfig.sinRefNumber - 1) * gateConfig.sinRefDistance) &&
-            (((nextRef - gateConfig.sinRef0) % gateConfig.sinRefDistance) == 0))
+            (nextRef <= gateConfig.sinRef0 + (gateConfig.sinRefNumber - gateConfig.sinRefGroupBy) * gateConfig.sinRefDistance / gateConfig.sinRefGroupBy + (gateConfig.sinRefGroupBy - 1)) &&
+            (((nextRef - gateConfig.sinRef0) % gateConfig.sinRefDistance) < gateConfig.sinRefGroupBy))
         {
             nextRef++;
             continue;
@@ -161,8 +171,8 @@ uint64_t GateState::getFreeRef(void)
 
         // Skip Sout gates
         if ((nextRef >= gateConfig.soutRef0) &&
-            (nextRef <= gateConfig.soutRef0 + (gateConfig.soutRefNumber - 1) * gateConfig.soutRefDistance) &&
-            (((nextRef - gateConfig.soutRef0) % gateConfig.soutRefDistance) == 0))
+            (nextRef <= gateConfig.soutRef0 + (gateConfig.soutRefNumber - gateConfig.soutRefGroupBy) * gateConfig.soutRefDistance / gateConfig.soutRefGroupBy + (gateConfig.sinRefGroupBy - 1)) &&
+            (((nextRef - gateConfig.soutRef0) % gateConfig.soutRefDistance) < gateConfig.soutRefGroupBy))
         {
             nextRef++;
             continue;
@@ -221,9 +231,12 @@ void GateState::copySoutToSinAndResetRefs(void)
     resetBitsAndCounters();
 
     // Restore local to Sin
+    uint64_t idx;
     for (uint64_t i = 0; i < gateConfig.sinRefNumber; i++)
     {
-        gate[gateConfig.sinRef0 + i * gateConfig.sinRefDistance].pin[pin_a].bit = localSout[i];
+        uint64_t rel_dis = i % gateConfig.sinRefGroupBy;
+        idx = (rel_dis == 0) ? (gateConfig.sinRef0 + gateConfig.sinRefDistance * i / gateConfig.sinRefGroupBy) : (idx + rel_dis);
+        gate[idx].pin[pin_a].bit = localSout[i];
     }
 
     // Free memory
@@ -366,10 +379,15 @@ void GateState::saveScriptToJson(json &j)
         // Input a elements
         json a;
         uint64_t refa = program[i]->pin[pin_a].wiredRef;
-        if ((refa <= (gateConfig.sinRefNumber * gateConfig.sinRefDistance + 1)) && (((refa - 1) % gateConfig.sinRefDistance) == 0) && (refa > gateConfig.sinRefDistance) && (program[i]->pin[pin_a].wiredPinId == PinId::pin_a))
+
+        if ((refa >= gateConfig.sinRef0) &&
+            (refa <= gateConfig.sinRef0 + (gateConfig.sinRefNumber - gateConfig.sinRefGroupBy) * gateConfig.sinRefDistance / gateConfig.sinRefGroupBy + (gateConfig.sinRefGroupBy - 1)) &&
+            (((refa - gateConfig.sinRef0) % gateConfig.sinRefDistance) < gateConfig.sinRefGroupBy) &&
+            (program[i]->pin[pin_a].wiredPinId == PinId::pin_a))
         {
             a["type"] = "input";
-            a["bit"] = (refa / gateConfig.sinRefDistance) - 1;
+            uint64_t s = refa - gateConfig.sinRef0;
+            a["bit"] = (s / gateConfig.sinRefDistance*gateConfig.sinRefGroupBy) + (s % gateConfig.sinRefGroupBy);
         }
         else
         {
@@ -382,10 +400,14 @@ void GateState::saveScriptToJson(json &j)
         // Input b elements
         json b;
         uint64_t refb = program[i]->pin[pin_b].wiredRef;
-        if ((refb <= (gateConfig.sinRefNumber * gateConfig.sinRefDistance + 1)) && (((refb - 1) % gateConfig.sinRefDistance) == 0) && (refb > gateConfig.sinRefDistance) && (program[i]->pin[pin_b].wiredPinId == PinId::pin_a))
+        if ((refb >= gateConfig.sinRef0) &&
+            (refb <= gateConfig.sinRef0 + (gateConfig.sinRefNumber - gateConfig.sinRefGroupBy) * gateConfig.sinRefDistance / gateConfig.sinRefGroupBy + (gateConfig.sinRefGroupBy - 1)) &&
+            (((refb - gateConfig.sinRef0) % gateConfig.sinRefDistance) < gateConfig.sinRefGroupBy) &&
+            (program[i]->pin[pin_b].wiredPinId == PinId::pin_a))
         {
             b["type"] = "input";
-            b["bit"] = (refb / gateConfig.sinRefDistance) - 1;
+            uint64_t s = refb - gateConfig.sinRef0;
+            b["bit"] = (s / gateConfig.sinRefDistance*gateConfig.sinRefGroupBy) + (s % gateConfig.sinRefGroupBy);
         }
         else
         {
